@@ -342,23 +342,28 @@ class OCR_Subtitles:
 def create_arg_parser():
     parser = argparse.ArgumentParser(description='A simple tool to OCR Muse subtitles')
 
-    parser.add_argument("clean", help="Path to the clean source.", metavar='<clean>')
-    parser.add_argument("sub", help="Path to the hardsub source.", metavar='<hardsub>')
     parser.add_argument('-o', '--output', default="output_subtitles", dest='output_subtitles', metavar='<outputname>',
                         help='Output subtitles filename')
-    parser.add_argument('--offset-clean', default=0, type=int, dest='offset_clean', metavar='<frame_offset>',
-                        help='Offset frame of clean')
-    parser.add_argument('--offset-sub', default=0, type=int, dest='offset_sub', metavar='<frame_offset>',
-                        help='Offset frame of sub')
     parser.add_argument('--filter', action=argparse.BooleanOptionalAction, default=True,
                         help='Skip filter and generate image step')
+    filter_group = parser.add_argument_group('Filter options (required if --filter is enable)')
+    filter_group.add_argument("clean", nargs='?', help="Path to the clean source.", metavar='<clean>')
+    filter_group.add_argument("sub", nargs='?', help="Path to the hardsub source.", metavar='<hardsub>')
+    filter_group.add_argument('--offset-clean', default=0, type=int, dest='offset_clean', metavar='<frame_offset>',
+                        help='Offset frame of clean')
+    filter_group.add_argument('--offset-sub', default=0, type=int, dest='offset_sub', metavar='<frame_offset>',
+                        help='Offset frame of sub')
+    
     return parser
 
 if is_preview():
     filter = Filter(r"clean.mkv", 0, r"sub.mkv", 0)
     filter.filter_videos()
 elif __name__ == "__main__":
-    args = create_arg_parser().parse_args()
+    parser = create_arg_parser()
+    args = parser.parse_args()
+    if args.filter and (not args.clean or not args.sub):
+        parser.error("The 'clean' and 'sub' arguments are required when '--filter' is enable.")
     current_directory = Path(Path.cwd())
     images_dir = Path(f'{current_directory}/images')
     srt_file = open(Path(f'{current_directory}/{args.output_subtitles}.srt'), 'w', encoding='utf-8')
