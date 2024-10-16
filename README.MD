@@ -14,7 +14,7 @@ Step 2: Install VapourSynth
 
 Step 3: `pip install -r requirements.txt`
 
-Step 4: `vsrepo.py install acrop fpng hysteresis lsmas misc tcanny tedgemask`
+Step 4: `vsrepo.py install acrop hysteresis lsmas misc tcanny tedgemask resize2 imwri`
 
 
 ## Usage
@@ -23,6 +23,8 @@ Prepare two source.
 - Non HardSubed, should be the same resoluion with HardSubed source. Higher resolution will take a longer time to process.
   
 Two sources must be synchronized. If not, adjust offset arguments.
+
+If two sources is hard to sync, then use VSF instead to generate clear images then put it into `images` folder. After that use this tool with `--no-filter` args.
 
 ```sh
 python ocr.py clean.mp4 sub.mp4
@@ -38,6 +40,8 @@ For non-Muse sources, it is necessary to adjust the crop parameters to an subtit
 ## TODO
 
 Rewrite this spaghetti.
+
+Need optimize reduce 2 duplicate detect step.
 
 ## Acknowledgement
 - [VapourSynth](https://www.vapoursynth.com/doc/index.html)

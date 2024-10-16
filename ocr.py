@@ -242,7 +242,7 @@ class Lens:
         return text
 
 class OCR_Subtitles:
-    THREADS = 20
+    THREADS = 30
     IMAGE_EXTENSIONS = ('*.jpeg', '*.jpg', '*.png', '*.bmp', '*.gif')
     def __init__(self, images_dir: Path, srt_file: Path) -> None:
         self.images: List[str] = []
