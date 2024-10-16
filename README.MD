@@ -24,8 +24,6 @@ Prepare two source.
   
 Two sources must be synchronized. If not, adjust offset arguments.
 
-If two sources is hard to sync, then use VSF instead to generate clear images then put it into `images` folder. After that use this tool with `--no-filter` args.
-
 ```sh
 python ocr.py clean.mp4 sub.mp4
 ```
@@ -36,6 +34,8 @@ python ocr.py --help
 ```
 
 For non-Muse sources, it is necessary to adjust the crop parameters to an subtitles area, also may need to adjust SceneDetect threshold.
+
+If two sources is hard to sync, then use VSF instead to generate clear images then put it into `images` folder. After that use this tool with `--no-filter` args.
 
 ## TODO
 
