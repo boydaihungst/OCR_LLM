@@ -25,11 +25,12 @@ core = vs.core
 
 ### Vapoursynth part
 class Filter:
-    def __init__(self, clean_path: str, clean_offset: int, sub_path: str, sub_offset: int):
+    def __init__(self, clean_path: str, clean_offset: int, sub_path: str, sub_offset: int, images_dir: Path):
         self.clean_path:str = clean_path
         self.clean_offset:int = clean_offset
         self.sub_path:str = sub_path
         self.sub_offset:int = sub_offset
+        self.images_dir:Path = images_dir
 
     def filter_videos(self):
         clean = core.lsmas.LWLibavSource(self.clean_path)[self.clean_offset:]
@@ -338,21 +339,99 @@ class OCR_Subtitles:
             self.srt_file.write(str(subtitle))
         self.srt_file.close()
 
-### CLI Part
-def create_arg_parser():
-    parser = argparse.ArgumentParser(description='A simple tool to OCR Muse subtitles')
+def find_matching_files(directory: str, hardsub_pattern: str, clean_pattern: str) -> Dict[str, Dict[str, str]]:
+    all_files = glob.glob(f"{directory}/*")
+    
+    episodes: Dict[str, Dict[str, str]] = {}
+    
+    for file in all_files:
+        hardsub_match = re.search(hardsub_pattern, file)
+        if hardsub_match:
+            episode = hardsub_match.group(1)
+            if episode not in episodes:
+                episodes[episode] = {'hardsub': file}
+            continue
+        
+        clean_match = re.search(clean_pattern, file)
+        if clean_match:
+            episode = clean_match.group(1)
+            if episode not in episodes:
+                episodes[episode] = {'clean': file}
+            elif 'clean' not in episodes[episode]:
+                episodes[episode]['clean'] = file
+    
+    return episodes
 
+def process_episode(clean_path: Optional[str], sub_path: Optional[str], images_dir: Optional[str], output_subtitles: str, offset_clean: int, offset_sub: int, do_filter: bool = True) -> None:
+    current_directory = Path(Path.cwd())
+    if not images_dir:
+        images_dir = Path(f'{current_directory}/images')
+    else:
+        images_dir = Path(images_dir)
+    
+    output_file = Path(f'{current_directory}/{output_subtitles}.srt')
+    counter = 1
+    while output_file.exists():
+        output_file = Path(f'{current_directory}/{output_subtitles}_{counter}.srt')
+        counter += 1
+    
+    srt_file = open(output_file, 'w', encoding='utf-8')
+
+    if do_filter:
+        if images_dir.exists():
+            rmtree(images_dir)
+        images_dir.mkdir()
+        
+        filter = Filter(clean_path, offset_clean, sub_path, offset_sub, images_dir)
+        filter.filter_videos()
+
+    engine = OCR_Subtitles(images_dir, srt_file)
+    engine.ocr()
+
+def batch_process(directory: str, hardsub_pattern: str, clean_pattern: str, offset_clean: int, offset_sub: int) -> None:
+    episodes = find_matching_files(directory, hardsub_pattern, clean_pattern)
+    
+    for episode, files in sorted(episodes.items()):
+        if 'clean' in files and 'hardsub' in files:
+            print(f"Processing episode {episode}")
+            output_subtitles = f"output_subtitles_ep{episode}"
+            images_dir = f"{directory}/images_{episode}"
+            process_episode(clean_path=files['clean'],
+                            sub_path=files['hardsub'],
+                            images_dir=images_dir,
+                            output_subtitles=output_subtitles,
+                            offset_clean=offset_clean,
+                            offset_sub=offset_sub,
+                            do_filter=True)
+        else:
+            print(f"Skipping episode {episode} - missing clean or hardsub file")
+
+def create_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description='A tool to OCR subtitles from video files, supporting both single-file and batch processing modes.')
     parser.add_argument('-o', '--output', default="output_subtitles", dest='output_subtitles', metavar='<outputname>',
-                        help='Output subtitles filename')
+                        help='Base name for output subtitle files. In batch mode, episode numbers will be appended.')
     parser.add_argument('--filter', action=argparse.BooleanOptionalAction, default=True,
-                        help='Skip filter and generate image step')
-    filter_group = parser.add_argument_group('Filter options (required if --filter is enable)')
-    filter_group.add_argument("clean", nargs='?', help="Path to the clean source.", metavar='<clean>')
-    filter_group.add_argument("sub", nargs='?', help="Path to the hardsub source.", metavar='<hardsub>')
-    filter_group.add_argument('--offset-clean', default=0, type=int, dest='offset_clean', metavar='<frame_offset>',
-                        help='Offset frame of clean')
-    filter_group.add_argument('--offset-sub', default=0, type=int, dest='offset_sub', metavar='<frame_offset>',
-                        help='Offset frame of sub')
+                        help='Enable or disable the filtering and image generation step. Default: enabled')
+    
+    parser.add_argument('--batch', action='store_true',
+                        help='Enable batch processing mode to handle multiple episodes')
+    
+    parser.add_argument('--directory', type=str, metavar='<dir>', default=".",
+                        help='Directory containing video files for batch processing')
+    
+    parser.add_argument('--clean-offset', default=0, type=int, dest='offset_clean', metavar='<frames>',
+                        help='Frame offset for clean video. Default: 0')
+    
+    parser.add_argument('--hardsub-offset', default=0, type=int, dest='offset_sub', metavar='<frames>',
+                        help='Frame offset for hardsub video. Default: 0')
+    
+    parser.add_argument("clean", nargs='?', metavar='<clean>',
+                        help='In single-file mode: path to the clean source video. '
+                             'In batch mode: regex pattern for matching clean files, with episode number as group 1.')
+    
+    parser.add_argument("hardsub", nargs='?', metavar='<hardsub>',
+                        help='In single-file mode: path to the hardsub source video. '
+                             'In batch mode: regex pattern for matching hardsub files, with episode number as group 1.')
     
     return parser
 
@@ -362,21 +441,31 @@ if is_preview():
 elif __name__ == "__main__":
     parser = create_arg_parser()
     args = parser.parse_args()
-    if args.filter and (not args.clean or not args.sub):
-        parser.error("The 'clean' and 'sub' arguments are required when '--filter' is enable.")
-    current_directory = Path(Path.cwd())
-    images_dir = Path(f'{current_directory}/images')
-    srt_file = open(Path(f'{current_directory}/{args.output_subtitles}.srt'), 'w', encoding='utf-8')
 
-
-    if args.filter:
-        if images_dir.exists():
-            rmtree(images_dir)
-        images_dir.mkdir()
-        filter = Filter(args.clean, args.offset_clean, args.sub, args.offset_sub)
-        filter.filter_videos()
-
-    engine = OCR_Subtitles(images_dir, srt_file)
-    engine.ocr()
+    if args.batch:
+        if not all([args.directory, args.clean, args.hardsub]):
+            parser.error("The --directory, clean (pattern), and sub (pattern) arguments are required when using batch mode")
+        batch_process(args.directory, args.hardsub, args.clean, args.offset_clean, args.offset_sub)
+    else:
+        if args.filter:
+            if not args.clean or not args.hardsub:
+                parser.error("The 'clean' and 'sub' arguments are required when '--filter' is enabled.")
+            
+            process_episode(clean_path=args.clean,
+                            sub_path=args.hardsub,
+                            images_dir=None,
+                            output_subtitles=args.output_subtitles,
+                            offset_clean=args.offset_clean,
+                            offset_sub=args.offset_sub,
+                            do_filter=True)
+        else:
+            process_episode(clean_path=None,
+                            sub_path=None,
+                            images_dir=None,
+                            output_subtitles=args.output_subtitles,
+                            offset_clean=args.offset_clean,
+                            offset_sub=args.offset_sub,
+                            do_filter=False)
 
     print("Done")
+
