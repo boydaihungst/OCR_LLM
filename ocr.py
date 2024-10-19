@@ -16,7 +16,9 @@ import lxml.html
 import vapoursynth as vs
 import vskernels
 from requests import Session
-from tqdm import tqdm
+from rich.console import Console
+from rich.progress import (BarColumn, Progress, ProgressColumn, Task, TaskID,
+                           Text, TextColumn, TimeRemainingColumn)
 from vsmasktools import HardsubLine
 from vspreview.api import is_preview
 from vstools import depth, get_depth, iterate, set_output
@@ -96,20 +98,23 @@ class Filter:
 
         return scene_changes
     
-    def _write_images(self, clip: vs.VideoNode, scene_changes: List[Tuple[int, int]]):
-        for scene_change in scene_changes:
-            crop = clip.acrop.AutoCrop(top=0, bottom=0, left=(clip.width / 4), right=(clip.width / 4))
-            image = crop.resize.Point(format=vs.RGB24, matrix_in_s='709').imwri.Write(imgformat="JPEG", filename=f'images/%d.png', quality=95)
-            image.get_frame(scene_change[0])
-            filename = self._format_frame_time(scene_change[0], scene_change[1], clip.fps_num, clip.fps_den)
+    def _write_images(self, bot_clip: vs.VideoNode, top_clip: vs.VideoNode, scene_changes: List[Tuple[int, int, str]]):
+        with get_render_progress("Writing images...", len(scene_changes)) as pbar:
+            for scene_change in scene_changes:
+                crop = bot_clip if scene_change[2] == 'bot' else top_clip
+                crop = crop.acrop.AutoCrop(top=0, bottom=0, left=(crop.width / 4), right=(crop.width / 4))
+                image = crop.resize.Point(format=vs.RGB24, matrix_in_s='709').imwri.Write(imgformat="JPEG", filename=f'{self.images_dir}/%d.png', quality=95)
+                image.get_frame(scene_change[0])
+                filename = self._format_frame_time(scene_change[0], scene_change[1], crop.fps_num, crop.fps_den)
 
-            dst_path = Path(f"images/{filename}.png")
-            for i in count(1):
-                if not os.path.exists(dst_path):
-                    break
-                dst_path = Path(f"images/{filename}_{i}.png")
+                dst_path = Path(f"{self.images_dir}/{filename}.png")
+                i = 1
+                while dst_path.exists():
+                    dst_path = Path(f"{self.images_dir}/{filename}_{i}.png")
+                    i += 1
 
-            rename(f"images/{scene_change[0]}.png", dst_path)
+                rename(f"{self.images_dir}/{scene_change[0]}.png", dst_path)
+                pbar.update(advance=1)
 
     def _format_frame_time(self, start_frame: int, end_frame: int, fpsnum: int, fpsden: int) -> str:
         start_time = self._to_timestamp(start_frame * fpsden / fpsnum)
@@ -133,6 +138,14 @@ class Filter:
         )
 
 ### OCR PART
+class OCRSpeedColumn(ProgressColumn):
+    """Progress rendering."""
+
+    def render(self, task: Task) -> Text:
+        """Render bar."""
+
+        return Text(f"{task.speed or 0:.02f} images/s")
+    
 class SRTSubtitle:
     def __init__(self, line_number, start_time, end_time, text_content):
         self.line_number = line_number
@@ -262,7 +275,17 @@ class OCR_Subtitles:
 
         total_images = len(self.images)
         
-        with tqdm(total=total_images, desc="OCR images", unit="img") as pbar:
+        console = Console()
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TextColumn("{task.percentage:>3.0f}%"),
+            OCRSpeedColumn(),
+            TimeRemainingColumn(),
+            console=console
+        ) as progress:
+            task: TaskID = progress.add_task("OCR images", total=total_images)
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.THREADS) as executor:
                 future_to_image = {executor.submit(self._process_image, image, index+1): image for index, image in enumerate(self.images)}
                 for future in concurrent.futures.as_completed(future_to_image):
@@ -274,7 +297,7 @@ class OCR_Subtitles:
                     else:
                         with self.scan_lock:
                             self.completed_scans += 1
-                            pbar.update(1)
+                            progress.update(task, advance=1)
         self._write_srt()
 
     def _process_image(self, image: Path, line: int):
