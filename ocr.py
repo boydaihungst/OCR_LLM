@@ -171,48 +171,20 @@ class SRTSubtitle:
 
     def __str__(self):
         return f"{self.line_number}\n{self.start_time} --> {self.end_time}\n{self.text_content}\n\n"
-    
+
 class Lens:
     LENS_ENDPOINT = f"https://lens.google.com/v3/upload"
     HEADERS = {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Origin': 'https://lens.google.com',
-        'Referer': 'https://lens.google.com/',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
-    COOKIES = {"SOCS": "CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"}
+    COOKIES = {"SOCS": "CAESHAgBEhJnd3NfMjAyMjA5MjktMF9SQzEaAnJvIAEaBgiAkvOZBg"}
 
     DOUBLE_QUOTE_REGEX = re.compile("|".join([
-        "«",
-        "‹",
-        "»",
-        "›",
-        "„",
-        "“",
-        "‟",
-        "”",
-        "❝",
-        "❞",
-        "❮",
-        "❯",
-        "〝",
-        "〞",
-        "〟",
-        "＂",
+        "«", "‹", "»", "›", "„", "“", "‟", "”", "❝", "❞", "❮", "❯", "〝", "〞", "〟", "＂", "＂"
     ]))
 
     SINGLE_QUOTE_REGEX = re.compile("|".join([
-        "‘",
-        "‛",
-        "’",
-        "❛", 
-        "❜", 
-        "`", 
-        "´", 
-        "‘", 
-        "’"
+        "‘", "‛", "’", "❛", "❜", "`", "´", "‘", "’"
     ]))
 
     def __init__(self):
@@ -243,14 +215,33 @@ class Lens:
 
         text = self._fix_quotes(text)
         text = self._remove_hieroglyphs_unicode(text)
-        text = self._apply_punctuation_and_spacing(text)
+        # text = self._apply_punctuation_and_spacing(text)
     
         return text
     
     def _remove_hieroglyphs_unicode(self, text: str) -> str:
+        allowed_categories = {
+            'Lu',  # Uppercase letter
+            'Ll',  # Lowercase letter
+            'Lt',  # Titlecase letter
+            'Nd',  # Decimal number
+            'Nl',  # Letter number
+            'No',  # Other number
+            'Pc',  # Connector punctuation
+            'Pd',  # Dash punctuation
+            'Ps',  # Open punctuation
+            'Pe',  # Close punctuation
+            'Pi',  # Initial punctuation
+            'Pf',  # Final punctuation
+            'Po',  # Other punctuation
+            'Sm',  # Math symbol
+            'Sc',  # Currency symbol
+            'Zs',  # Space separator
+        }
+        
         result = ""
         for char in text:
-            if unicodedata.category(char) not in ('Lo'):
+            if unicodedata.category(char) in allowed_categories:
                 result += char
         return result.strip()
 
