@@ -300,7 +300,7 @@ class OCR_Subtitles:
                     try:
                         future.result()
                     except Exception as exc:
-                        print(f"{image} generated an exception: {exc}")
+                        console.print(f"[red]{image} generated an exception: {exc}[/red]")
                     else:
                         with self.scan_lock:
                             self.completed_scans += 1
@@ -312,9 +312,10 @@ class OCR_Subtitles:
         img_name = str(image.name)
 
         try:
-            text_content = self.lens.lens_ocr(img_filename)
-        except Exception:
-            print(f"Error processing {img_name}: {Exception}")
+            text = self.lens.lens_ocr(img_filename)
+        except Exception as e:
+            print(f"Error processing {img_name}: {e}")
+            text = ""
 
         try:
             start_hour = img_name.split('_')[0][:2]
@@ -337,7 +338,7 @@ class OCR_Subtitles:
             line,
             start_time,
             end_time,
-            text_content
+            text
         )
         self.srt_dict[line] = subtitle
 
