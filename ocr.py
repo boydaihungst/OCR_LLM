@@ -1,15 +1,14 @@
 import argparse
 import concurrent.futures
-import os
+import glob
 import re
 import unicodedata
 from io import StringIO
-from itertools import count
 from os import rename
 from pathlib import Path
 from shutil import rmtree
 from threading import Lock
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import json5
 import lxml.html
@@ -21,101 +20,118 @@ from rich.progress import (BarColumn, Progress, ProgressColumn, Task, TaskID,
                            Text, TextColumn, TimeRemainingColumn)
 from vsmasktools import HardsubLine
 from vspreview.api import is_preview
-from vstools import depth, get_depth, iterate, set_output
+from vstools import (clip_async_render, depth, get_depth, get_w, iterate,
+                     set_output)
 
 core = vs.core
 
 ### Vapoursynth part
 class Filter:
-    def __init__(self, clean_path: str, clean_offset: int, sub_path: str, sub_offset: int, images_dir: Path):
+    def __init__(self, clean_path: str, clean_offset: int, hardsub_path: str, sub_offset: int, images_dir: Path):
         self.clean_path:str = clean_path
         self.clean_offset:int = clean_offset
-        self.sub_path:str = sub_path
+        self.hardsub_path:str = hardsub_path
         self.sub_offset:int = sub_offset
         self.images_dir:Path = images_dir
 
     def filter_videos(self):
         clean = core.lsmas.LWLibavSource(self.clean_path)[self.clean_offset:]
-        sub = core.lsmas.LWLibavSource(self.sub_path)[self.sub_offset:]
+        hardsub = core.lsmas.LWLibavSource(self.hardsub_path)[self.sub_offset:]
 
-        if clean.width != sub.width or clean.height != sub.height:
-            clean = vskernels.Catrom.scale(clean, sub.width, sub.height)
+        if hardsub.height > 720:
+            hardsub = vskernels.Bilinear.scale(hardsub, width=get_w(720, hardsub), height=720)
+        if clean.width != hardsub.width or clean.height != hardsub.height:
+            clean = vskernels.Bilinear.scale(clean, hardsub.width, hardsub.height)
 
-        if get_depth(clean) != get_depth(sub):
-            clean = depth(clean, get_depth(sub))
-        # 720p 590, 1080p 860
-        sub_height = sub.height - (sub.height / 5)
+        if get_depth(clean) != get_depth(hardsub):
+            clean = depth(clean, get_depth(hardsub))
+
+        sub_height = hardsub.height - (hardsub.height / 5)
         sub_vert = 20
 
         bot_clean = clean.std.Crop(bottom=sub_vert, top=sub_height)
-        bot_sub = sub.std.Crop(bottom=sub_vert, top=sub_height)
+        bot_hardsub = hardsub.std.Crop(bottom=sub_vert, top=sub_height)
 
         top_clean = clean.std.Crop(bottom=sub_height, top=sub_vert)
-        top_sub = sub.std.Crop(bottom=sub_height, top=sub_vert)
+        top_hardsub = hardsub.std.Crop(bottom=sub_height, top=sub_vert)
 
-        bot_subtitles = self._get_subtitles(bot_clean, bot_sub)
-        top_subtitles = self._get_subtitles(top_clean, top_sub)
+        bot_subtitles = self._get_subtitles(bot_clean, bot_hardsub)
+        top_subtitles = self._get_subtitles(top_clean, top_hardsub)
+        
+        def merge_props(n, f):
+            top_f = f[0]
+            bot_f = f[1]
+            sub_f = f[2].copy()
+            for prop in top_f.props:
+                sub_f.props[f"top{prop}"] = top_f.props[prop]
+            for prop in bot_f.props:
+                sub_f.props[f"bot{prop}"] = bot_f.props[prop]
+            return sub_f
+
+        blank = hardsub.std.BlankClip(format=hardsub.format.id, keep=True)
+        mergeProps = blank.std.ModifyFrame(merge_props, clips=[top_subtitles, bot_subtitles, blank])
+
         if is_preview():
-            # set_output(top_subtitles.text.FrameProps(props=["_SceneChangePrev", "_SceneChangeNext", "PlaneStatsAverage"]), "top")
-            # set_output(bot_subtitles.text.FrameProps(props=["_SceneChangePrev", "_SceneChangeNext", "PlaneStatsAverage"]), "bot")
-            set_output(top_subtitles.text.FrameProps(), "top")
-            set_output(bot_subtitles.text.FrameProps(), "bot")
-            set_output(sub.text.FrameProps(), "sub")
+            set_output(top_subtitles.text.FrameProps(props=["_SceneChangePrev", "_SceneChangeNext", "PlaneStatsAverage"]), "top")
+            set_output(bot_subtitles.text.FrameProps(props=["_SceneChangePrev", "_SceneChangeNext", "PlaneStatsAverage"]), "bot")
+            set_output(hardsub.text.FrameProps(), "sub")
             set_output(clean.text.FrameProps(), "clean")
             return
+        
+        scene_changes = self._get_scene_changes(mergeProps, bot_subtitles, top_subtitles)
+        self._rename_images(scene_changes, hardsub.fps_num, hardsub.fps_den)
 
-        scene_changes_bot = self._get_scene_changes(bot_subtitles)
-        scene_changes_top = self._get_scene_changes(top_subtitles)
-
-        print("Writing images...")
-        self._write_images(bot_subtitles, scene_changes_bot)
-        self._write_images(top_subtitles, scene_changes_top)
-
-    def _get_subtitles(self, clean: vs.VideoNode, sub: vs.VideoNode) -> vs.VideoNode:
-        mask = HardsubLine().get_mask(sub, clean)
+    def _get_subtitles(self, clean: vs.VideoNode, hardsub: vs.VideoNode) -> vs.VideoNode:
+        mask = HardsubLine().get_mask(hardsub, clean)
+         # Use mask for better detection
         scd = mask.misc.SCDetect(0.02).std.PlaneStats()
         mask = iterate(mask, core.std.Maximum, 15)
-        blank = sub.std.BlankClip(format=sub.format.id, keep=True)
-        merge = blank.std.MaskedMerge(sub, mask)
-        # Use mask for better detection
+        blank = hardsub.std.BlankClip(format=hardsub.format.id, keep=True)
+        merge = blank.std.MaskedMerge(hardsub, mask)
         return merge.std.CopyFrameProps(scd)
-
-
-    def _get_scene_changes(self, clip: vs.VideoNode) -> List[Tuple[int, int]]:
+    
+    def _get_scene_changes(self, clip: vs.VideoNode, bot_clip: vs.VideoNode, top_clip: vs.VideoNode) -> List[Tuple[int, int, str]]:
         scene_changes = []
-        current_start = None
-        with tqdm(total=clip.num_frames, desc="Detecting scene changes...", unit="frame") as pbar:
-            for n in range(clip.num_frames):
-                f = clip.get_frame(n)
-                pbar.update(1)
-                if f.props["PlaneStatsAverage"] < 0.02:
+        current_start = {'top': None, 'bot': None}
+        
+        def process_frame(n: int, f: vs.VideoFrame):
+            nonlocal scene_changes, current_start
+            for location in ['top', 'bot']:
+                if f.props[f"{location}PlaneStatsAverage"] < 0.02:
                     continue
-                if f.props["_SceneChangePrev"] == 1:
-                    current_start = n
-                elif f.props["_SceneChangeNext"] and current_start is not None:
-                    scene_changes.append((current_start, n))
-                    current_start = None
+                if f.props[f"{location}_SceneChangePrev"] == 1:
+                    current_start[location] = n
+                elif f.props[f"{location}_SceneChangeNext"] == 1 and current_start[location] is not None:
+                    source_clip = bot_clip if location == 'bot' else top_clip
+
+                    crop_value = int(source_clip.width / 3)
+                    crop_value = crop_value if crop_value % 2 == 0 else crop_value - 1
+                    crop = source_clip.acrop.AutoCrop(top=0, bottom=0, left=crop_value, right=crop_value)
+                    crop = vskernels.Point.scale(crop, format=vs.RGB24, matrix_in_s='709')
+
+                    images = crop.imwri.Write(imgformat="JPEG", filename=f'{self.images_dir}/{location}_%d.jpg', quality=95)
+                    images.get_frame(current_start[location])
+
+                    scene_changes.append((current_start[location], n, location))
+                    current_start[location] = None
+
+        clip_async_render(clip, callback=process_frame, progress="Detecting scene changes...", async_requests=False)
 
         return scene_changes
-    
-    def _write_images(self, bot_clip: vs.VideoNode, top_clip: vs.VideoNode, scene_changes: List[Tuple[int, int, str]]):
-        with get_render_progress("Writing images...", len(scene_changes)) as pbar:
-            for scene_change in scene_changes:
-                crop = bot_clip if scene_change[2] == 'bot' else top_clip
-                crop = crop.acrop.AutoCrop(top=0, bottom=0, left=(crop.width / 4), right=(crop.width / 4))
-                image = crop.resize.Point(format=vs.RGB24, matrix_in_s='709').imwri.Write(imgformat="JPEG", filename=f'{self.images_dir}/%d.png', quality=95)
-                image.get_frame(scene_change[0])
-                filename = self._format_frame_time(scene_change[0], scene_change[1], crop.fps_num, crop.fps_den)
 
-                dst_path = Path(f"{self.images_dir}/{filename}.png")
-                i = 1
-                while dst_path.exists():
-                    dst_path = Path(f"{self.images_dir}/{filename}_{i}.png")
-                    i += 1
-
-                rename(f"{self.images_dir}/{scene_change[0]}.png", dst_path)
-                pbar.update(advance=1)
-
+    def _rename_images(self, scene_changes: List[Tuple[int, int, str]], fpsnum: int, fpsden: int):
+        for scene_change in scene_changes:
+            filename = self._format_frame_time(scene_change[0], scene_change[1], fpsnum, fpsden)
+            dst_path = Path(f"{self.images_dir}/{filename}.jpg")
+            i = 1
+            while dst_path.exists():
+                dst_path = Path(f"{self.images_dir}/{filename}_{i}.jpg")
+                i += 1
+            if Path(f"{self.images_dir}/{scene_change[2]}_{scene_change[0]}.jpg").exists():
+                rename(f"{self.images_dir}/{scene_change[2]}_{scene_change[0]}.jpg", dst_path)
+            else:
+                print(f"Image {scene_change[2]}_{scene_change[0]}.jpg not found")
+        
     def _format_frame_time(self, start_frame: int, end_frame: int, fpsnum: int, fpsden: int) -> str:
         start_time = self._to_timestamp(start_frame * fpsden / fpsnum)
         end_time = self._to_timestamp((end_frame + 1) * fpsden / fpsnum)
