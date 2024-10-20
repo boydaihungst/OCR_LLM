@@ -41,8 +41,6 @@ If two sources is hard to sync, then use VSF instead to generate clear images th
 
 Rewrite this spaghetti.
 
-Need optimize reduce 2 duplicate detect step.
-
 ## Acknowledgement
 - [VapourSynth](https://www.vapoursynth.com/doc/index.html)
 - [JET](https://github.com/Jaded-Encoding-Thaumaturgy)
