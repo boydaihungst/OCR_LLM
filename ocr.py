@@ -20,7 +20,7 @@ from rich.progress import (BarColumn, Progress, ProgressColumn, Task, TaskID,
                            Text, TextColumn, TimeRemainingColumn)
 from vsmasktools import HardsubLine
 from vspreview.api import is_preview
-from vstools import (clip_async_render, depth, get_depth, get_w, iterate,
+from vstools import (depth, get_depth, get_render_progress, get_w, iterate,
                      set_output)
 
 core = vs.core
@@ -91,33 +91,34 @@ class Filter:
         return merge.std.CopyFrameProps(scd)
     
     def _get_scene_changes(self, clip: vs.VideoNode, bot_clip: vs.VideoNode, top_clip: vs.VideoNode) -> List[Tuple[int, int, str]]:
-        scene_changes = []
-        current_start = {'top': None, 'bot': None}
-        
-        def process_frame(n: int, f: vs.VideoFrame):
-            nonlocal scene_changes, current_start
-            for location in ['top', 'bot']:
-                if f.props[f"{location}PlaneStatsAverage"] < 0.02:
-                    continue
-                if f.props[f"{location}_SceneChangePrev"] == 1:
-                    current_start[location] = n
-                elif f.props[f"{location}_SceneChangeNext"] == 1 and current_start[location] is not None:
-                    source_clip = bot_clip if location == 'bot' else top_clip
+        with get_render_progress(title="Detecting scene changes...", total=clip.num_frames) as progress:
+            scene_changes = []
+            current_start = {'top': None, 'bot': None}
 
-                    crop_value = int(source_clip.width / 3)
-                    crop_value = crop_value if crop_value % 2 == 0 else crop_value - 1
-                    crop = source_clip.acrop.AutoCrop(top=0, bottom=0, left=crop_value, right=crop_value)
-                    crop = vskernels.Point.scale(crop, format=vs.RGB24, matrix_in_s='709')
+            for n in range(clip.num_frames):
+                f = clip.get_frame(n)
+                for location in ['top', 'bot']:
+                    if f.props[f"{location}PlaneStatsAverage"] < 0.02:
+                        continue
+                    elif f.props[f"{location}_SceneChangePrev"] == 1:
+                        current_start[location] = n
+                    elif f.props[f"{location}_SceneChangeNext"] == 1 and current_start[location] is not None:
+                        source_clip = bot_clip if location == 'bot' else top_clip
+                        scene_changes.append((current_start[location], n, location))
 
-                    images = crop.imwri.Write(imgformat="JPEG", filename=f'{self.images_dir}/{location}_%d.jpg', quality=95)
-                    images.get_frame(current_start[location])
+                        crop_value = int(source_clip.width / 3)
+                        crop_value = crop_value if crop_value % 2 == 0 else crop_value - 1
+                        crop = source_clip.acrop.AutoCrop(top=0, bottom=0, left=crop_value, right=crop_value)
+                        crop = vskernels.Point.scale(crop, format=vs.RGB24, matrix_in_s='709')
 
-                    scene_changes.append((current_start[location], n, location))
-                    current_start[location] = None
+                        images = crop.imwri.Write(imgformat="JPEG", filename=f'{self.images_dir}/{location}_%d.jpg', quality=95)
+                        images.get_frame(current_start[location])
 
-        clip_async_render(clip, callback=process_frame, progress="Detecting scene changes...", async_requests=False)
+                        current_start[location] = None
+                
+                progress.update(advance=1)
 
-        return scene_changes
+            return scene_changes
 
     def _rename_images(self, scene_changes: List[Tuple[int, int, str]], fpsnum: int, fpsden: int):
         for scene_change in scene_changes:
