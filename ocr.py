@@ -377,14 +377,16 @@ def find_matching_files(directory: str, hardsub_pattern: str, clean_pattern: str
     episodes: Dict[str, Dict[str, str]] = {}
     
     for file in all_files:
-        hardsub_match = re.search(hardsub_pattern, file)
+        file_name = Path(file).name
+        hardsub_match = re.search(hardsub_pattern, file_name)
         if hardsub_match:
             episode = hardsub_match.group(1)
             if episode not in episodes:
                 episodes[episode] = {'hardsub': file}
-            continue
+            elif 'hardsub' not in episodes[episode]:
+                episodes[episode]['hardsub'] = file
         
-        clean_match = re.search(clean_pattern, file)
+        clean_match = re.search(clean_pattern, file_name)
         if clean_match:
             episode = clean_match.group(1)
             if episode not in episodes:
