@@ -175,9 +175,6 @@ class SRTSubtitle:
 
 class Lens:
     LENS_ENDPOINT = f"https://lens.google.com/v3/upload"
-    HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    }
     COOKIES = {"SOCS": "CAESHAgBEhJnd3NfMjAyMjA5MjktMF9SQzEaAnJvIAEaBgiAkvOZBg"}
 
     DOUBLE_QUOTE_REGEX = re.compile("|".join([
@@ -197,7 +194,7 @@ class Lens:
         }
 
         res = self.session.post(
-            self.LENS_ENDPOINT, files=files, headers=self.HEADERS, cookies=self.COOKIES, timeout=40
+            self.LENS_ENDPOINT, files=files, cookies=self.COOKIES, timeout=40
         )
         if res.status_code != 200:
             raise Exception(f"Failed to upload image. Status code: {res.status_code}")
