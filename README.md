@@ -82,7 +82,7 @@ g++ -std=c++11 -shared -fPIC -O2 ./autocrop.cpp -o /usr/lib/vapoursynth/libautoc
 
 Two sources must be synchronized. If not, adjust offset arguments.
 
-### Create LLM from google colab
+### Create LLM API in google colab
 
 - Get ngrok auth token: [https://dashboard.ngrok.com/get-started/setup](https://dashboard.ngrok.com/get-started/setup)
   The token is behind `add-authtoken`
@@ -93,12 +93,14 @@ Two sources must be synchronized. If not, adjust offset arguments.
 
   ![](assets/2025-02-06-19-32-50.png)
 
-  Then Start collab step by step from top to bottom.
+- Then Start collab step by step from top to bottom.
   The last step won’t show a finished status. As long as you see this message, it’s working fine.
   The `llm-api` = `https://7ceb-34-19-47-52.ngrok-free.app/ocr`
   ![](assets/2025-02-06-19-41-00.png)
 
 ### Step to OCR
+
+(Optional) Use [download_hardsub_media.sh](./download_hardsub_media.sh) to download hardsub media from `https://phim.nguonc.com`
 
 ```sh
 # Active python virtual environment
