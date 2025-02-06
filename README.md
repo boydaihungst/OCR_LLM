@@ -1,7 +1,7 @@
 ## How it work?
 
 Diff a hardsubbed video with video that is not hardsubbed to detect subtitle frames.
-Extract these frames as images and OCR them using Google Lens.
+Extract these frames as images and OCR them using LLM (5CD-AI/Vintern-1B-v3_5). Work best with vietnamese and Latin based languages.
 Integrate the resulting text into an SRT subtitle file.
 
 ## Accuracy
