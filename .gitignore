@@ -1,4 +1,5 @@
 hls_downloaded/
+images/
 a.m3u8
 *.log
 
@@ -20,3 +21,10 @@ a.m3u8
 *.wmv
 *.flv
 *.webm
+
+# Extras
+*.lwi
+*.srt
+*.ass
+*.php
+
