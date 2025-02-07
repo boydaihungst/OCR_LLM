@@ -2,6 +2,7 @@ import argparse
 import concurrent.futures
 import glob
 import re
+import time
 import unicodedata
 from io import StringIO
 from os import rename
@@ -14,7 +15,7 @@ import json5
 import lxml.html
 import vapoursynth as vs
 import vskernels
-from requests import Session
+from httpx import Client
 from rich.console import Console
 from rich.progress import (BarColumn, Progress, ProgressColumn, Task, TaskID,
                            Text, TextColumn, TimeRemainingColumn)
@@ -174,8 +175,49 @@ class SRTSubtitle:
         return f"{self.line_number}\n{self.start_time} --> {self.end_time}\n{self.text_content}\n\n"
 
 class Lens:
+    fake_chromium_config = {
+            "viewport": (1920, 1080),
+            "major_version": "109",
+            "version": "109.0.5414.87",
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.5414.87 Safari/537.36",
+        }
+    
     LENS_ENDPOINT = f"https://lens.google.com/v3/upload"
-    COOKIES = {"SOCS": "CAESHAgBEhJnd3NfMjAyMjA5MjktMF9SQzEaAnJvIAEaBgiAkvOZBg"}
+    COOKIES = {"SOCS": "CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"}
+    PARAMS = {
+            "ep": "ccm",  # EntryPoint
+            "re": "dcsp",  # RenderingEnvironment - DesktopChromeSurfaceProto
+            "s": "4",  # SurfaceProtoValue - Surface.CHROMIUM
+            "st": str(int(time.time() * 1000)),
+            "sideimagesearch": "1",
+            "vpw": str(fake_chromium_config["viewport"][0]),
+            "vph": str(fake_chromium_config["viewport"][1]),
+        }
+    HEADERS = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Cache-Control": "max-age=0",
+            "Origin": "https://lens.google.com",
+            "Referer": "https://lens.google.com/",
+            "Sec-Ch-Ua": f'"Not A(Brand";v="99", "Google Chrome";v="{fake_chromium_config["major_version"]}", "Chromium";v="{fake_chromium_config["major_version"]}"',
+            "Sec-Ch-Ua-Arch": '"x86"',
+            "Sec-Ch-Ua-Bitness": '"64"',
+            "Sec-Ch-Ua-Full-Version": f'"{fake_chromium_config["version"]}"',
+            "Sec-Ch-Ua-Full-Version-List": f'"Not A(Brand";v="99.0.0.0", "Google Chrome";v="{fake_chromium_config["major_version"]}", "Chromium";v="{fake_chromium_config["major_version"]}"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Model": '""',
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua-Platform-Version": '"15.0.0"',
+            "Sec-Ch-Ua-Wow64": "?0",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+            # "User-Agent": fake_chromium_config["user_agent"],
+            "X-Client-Data": "CIW2yQEIorbJAQipncoBCIH+ygEIkqHLAQiKo8sBCPWYzQEIhaDNAQji0M4BCLPTzgEI19TOAQjy1c4BCJLYzgEIwNjOAQjM2M4BGM7VzgE=",
+        }
 
     DOUBLE_QUOTE_REGEX = re.compile("|".join([
         "«", "‹", "»", "›", "„", "“", "‟", "”", "❝", "❞", "❮", "❯", "〝", "〞", "〟", "＂", "＂"
@@ -186,16 +228,23 @@ class Lens:
     ]))
 
     def __init__(self):
-        self.session = Session()
+        self.client = Client()
+
+    def __del__(self):
+        self.client.close()
 
     def lens_ocr(self, img_path: str) -> str:
         files = {
             "encoded_image": ("screenshot.png", (open(img_path, 'rb')), "image/png")
         }
 
-        res = self.session.post(
-            self.LENS_ENDPOINT, files=files, cookies=self.COOKIES, timeout=40
-        )
+        res = self.client.post(self.LENS_ENDPOINT, 
+                         files=files, 
+                         headers=self.HEADERS, 
+                         params=self.PARAMS, 
+                         cookies=self.COOKIES,
+                         timeout=40)
+
         if res.status_code != 200:
             raise Exception(f"Failed to upload image. Status code: {res.status_code}")
 
