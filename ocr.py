@@ -3,6 +3,7 @@ import concurrent.futures
 import glob
 import os
 import re
+import subprocess
 import unicodedata
 from io import StringIO
 from os import rename
@@ -173,9 +174,9 @@ class Filter:
         self, scene_changes: List[Tuple[int, int, str]], fpsnum: int, fpsden: int
     ):
         for scene_change in scene_changes:
-            filename = self._format_frame_time(
+            filename = f"{scene_change[2]}_{self._format_frame_time(
                 scene_change[0], scene_change[1], fpsnum, fpsden
-            )
+            )}"
             dst_path = Path(f"{self.images_dir}/{filename}.jpg")
             i = 1
             while dst_path.exists():
@@ -227,15 +228,22 @@ class OCRSpeedColumn(ProgressColumn):
         return Text(f"{task.speed or 0:.02f} images/s")
 
 
-class SRTSubtitle:
-    def __init__(self, line_number, start_time, end_time, text_content):
+class AssSubtitle:
+    def __init__(self, line_number, start_time, end_time, text_content, is_sign=False):
         self.line_number = line_number
         self.start_time = start_time
         self.end_time = end_time
         self.text_content = text_content
+        self.style_name = "Signs" if is_sign else "Default"
+
+    def convert_timestamp(self, s: str):
+        h, m, rest = s.split(":")
+        s, ms = rest.split(",")
+        return f"{int(h)}:{m}:{s}.{ms}"
 
     def __str__(self):
-        return f"{self.line_number}\n{self.start_time} --> {self.end_time}\n{self.text_content}\n\n"
+        # Dialogue: 0,0:23:11.48,0:23:13.98,Default,,0,0,0,,Xin lỗi vì sáng nào cũng làm phiền.
+        return f"Dialogue: 0,{self.convert_timestamp(self.start_time)},{self.convert_timestamp(self.end_time)},{self.style_name},,0,0,0,,{self.text_content}\n"
 
 
 class Lens:
@@ -275,16 +283,33 @@ class Lens:
         self.llm_api = llm_api
 
     def lens_ocr(self, img_path: str) -> str:
-        llm_ai_url = self.llm_api
-        files = {"image": open(img_path, "rb")}
+        if self.llm_api:
+            files = {"image": open(img_path, "rb")}
 
-        response = requests.post(llm_ai_url, files=files)
-        # Check if the request was successful (HTTP 200)
-        if response.status_code == 200:
-            text=response.text
+            response = requests.post(self.llm_api, files=files)
+            # Check if the request was successful (HTTP 200)
+            if response.status_code == 200:
+                text = response.text
+            else:
+                print(f"Error {response.status_code}: {response.text}")
+                text = ""
         else:
-            print(f"Error {response.status_code}: {response.text}")
-            text=""
+            # https://github.com/dimdenGD/chrome-lens-ocr
+            result = subprocess.run(
+                [
+                    "node",
+                    os.path.join(
+                        "./",
+                        "chrome-lens-ocr/cli.js",
+                    ),
+                    "-d",
+                    img_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,  # Raises CalledProcessError if the command fails
+            )
+            text = result.stdout
         # status = ggdrive.perform_ocr(img_path)
         # with open(
         #     os.path.splitext(img_path)[0] + ".google.txt", "r", encoding="utf-8"
@@ -296,7 +321,7 @@ class Lens:
         #     raise Exception(f"Failed to upload image. ggdrive API")
         text = self._fix_quotes(text)
         text = self._remove_hieroglyphs_unicode(text)
-        # text = self._apply_punctuation_and_spacing(text)
+        text = self._apply_punctuation_and_spacing(text)
 
         return text
 
@@ -330,7 +355,7 @@ class Lens:
 
             if char == "\n":
                 if not last_char_was_newline:  # Prevent consecutive newlines
-                    result.append(char)
+                    result.append("\\N")
                 last_char_was_newline = True  # Mark that we added a newline
             elif category in allowed_categories:
                 result.append(char)
@@ -340,6 +365,12 @@ class Lens:
 
         cleaned_text = "".join(result).strip()
 
+        # Remove trailing \N if it exists
+        if cleaned_text.endswith("\\N"):
+            cleaned_text = cleaned_text[:-2]
+
+        # Ensure no more than one consecutive empty line (extra safety)
+        cleaned_text = re.sub(r"(\\\\N){2,}", r"\\N", cleaned_text)
         # Ensure no more than one consecutive empty line (extra safety)
         cleaned_text = re.sub(r"\n{2,}", "\n", cleaned_text)
 
@@ -364,14 +395,14 @@ class Lens:
 
 
 class OCR_Subtitles:
-    THREADS = 1
     IMAGE_EXTENSIONS = ("*.jpeg", "*.jpg", "*.png", "*.bmp", "*.gif")
 
     def __init__(self, images_dir: Path, srt_file: Path, llm_api: str) -> None:
         self.images: List[str] = []
-        self.srt_dict: Dict[str, SRTSubtitle] = {}
+        self.srt_dict: Dict[int, AssSubtitle] = {}
         self.scan_lock: Lock = Lock()
         self.lens: Lens = Lens(llm_api)
+        self.THREADS: int = 1 if llm_api else 10
         self.images_dir: Path = images_dir
         self.srt_file: Path = srt_file
         self.completed_scans: int = 0
@@ -402,7 +433,7 @@ class OCR_Subtitles:
                 max_workers=self.THREADS
             ) as executor:
                 future_to_image = {
-                    executor.submit(self._process_image, image, index + 1): image
+                    executor.submit(self._process_image, Path(image), index + 1): image
                     for index, image in enumerate(self.images)
                 }
                 for future in concurrent.futures.as_completed(future_to_image):
@@ -428,12 +459,14 @@ class OCR_Subtitles:
         except Exception as e:
             print(f"Error processing {img_name}: {e}")
             text = ""
+            is_sign = False
 
         try:
-            start_hour = img_name.split("_")[0][:2]
-            start_min = img_name.split("_")[1][:2]
-            start_sec = img_name.split("_")[2][:2]
-            start_micro = img_name.split("_")[3][:3]
+            start_hour = img_name.split("_")[1][:2]
+            is_sign = img_name.split("_")[0] == "top"
+            start_min = img_name.split("_")[2][:2]
+            start_sec = img_name.split("_")[3][:2]
+            start_micro = img_name.split("_")[4][:3]
 
             end_hour = img_name.split("__")[1].split("_")[0][:2]
             end_min = img_name.split("__")[1].split("_")[1][:2]
@@ -448,7 +481,7 @@ class OCR_Subtitles:
         start_time = f"{start_hour}:{start_min}:{start_sec},{start_micro}"
         end_time = f"{end_hour}:{end_min}:{end_sec},{end_micro}"
 
-        subtitle = SRTSubtitle(line, start_time, end_time, text)
+        subtitle = AssSubtitle(line, start_time, end_time, text, is_sign)
         self.srt_dict[line] = subtitle
 
     def _write_srt(self):
@@ -462,7 +495,7 @@ class OCR_Subtitles:
             if not subtitle.text_content or subtitle.text_content.isspace():
                 continue
             if previous_subtitle.text_content == subtitle.text_content:
-                merged_subtitle = SRTSubtitle(
+                merged_subtitle = AssSubtitle(
                     line_number=previous_subtitle.line_number,
                     start_time=previous_subtitle.start_time,
                     end_time=subtitle.end_time,
@@ -475,6 +508,23 @@ class OCR_Subtitles:
                 cleaned_srt.append(subtitle)
             previous_subtitle = cleaned_srt[-1]
 
+        self.srt_file.write(
+            f"""[Script Info]
+ScriptType: v4.00+
+PlayDepth: 0
+ScaledBorderAndShadow: Yes
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,UVN Sach Vo,81,&H00FFFFFF,&H000000FF,&H4D000000,&H81000000,-1,0,0,0,100,100,0,0,1,2,3,2,60,60,30,1
+Style: Signs,Open Sans,60,&H00FFFFFF,&H000000FF,&H4D000000,&H81000000,-1,0,0,0,100,100,0,0,1,2,3,8,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        )
         for subtitle in cleaned_srt:
             self.srt_file.write(str(subtitle))
         self.srt_file.close()
@@ -524,10 +574,10 @@ def process_episode(
     else:
         images_dir = Path(images_dir)
 
-    output_file = Path(f"{current_directory}/{output_subtitles}.srt")
+    output_file = Path(f"{current_directory}/{output_subtitles}.ass")
     counter = 1
     while output_file.exists():
-        output_file = Path(f"{current_directory}/{output_subtitles}_{counter}.srt")
+        output_file = Path(f"{current_directory}/{output_subtitles}_{counter}.ass")
         counter += 1
 
     srt_file = open(output_file, "w", encoding="utf-8")
@@ -567,7 +617,7 @@ def batch_process(
                 offset_clean=offset_clean,
                 offset_sub=offset_sub,
                 do_filter=True,
-                llm_api=llm_api
+                llm_api=llm_api,
             )
         else:
             print(f"Skipping episode {episode} - missing clean or hardsub file")
@@ -581,7 +631,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
         "--llm-api",
         type=str,
         metavar="<llm_api>",
-        required=True,
+        required=False,
         help="LLM. Example: https://7ceb-34-19-47-11.ngrok-free.app/ocr",
     )
     parser.add_argument(
@@ -657,17 +707,18 @@ elif __name__ == "__main__":
     parser = create_arg_parser()
     args = parser.parse_args()
 
-    if not all([args.llm_api]):
-        parser.error(
-            "The --llm-api argument is required"
-        )
     if args.batch:
         if not all([args.directory, args.clean, args.hardsub]):
             parser.error(
                 "The --directory, clean (pattern), and sub (pattern) arguments are required when using batch mode"
             )
         batch_process(
-            args.directory, args.hardsub, args.clean, args.offset_clean, args.offset_sub, args.llm_api
+            args.directory,
+            args.hardsub,
+            args.clean,
+            args.offset_clean,
+            args.offset_sub,
+            args.llm_api,
         )
     else:
         if args.filter:
@@ -685,7 +736,6 @@ elif __name__ == "__main__":
                 offset_sub=args.offset_sub,
                 do_filter=True,
                 llm_api=args.llm_api,
-
             )
         else:
             process_episode(

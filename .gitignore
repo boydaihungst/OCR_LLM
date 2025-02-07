@@ -2,6 +2,7 @@ hls_downloaded/
 images/
 .venv/
 .ipynb_checkpoints/
+chrome-lens-ocr/
 a.m3u8
 *.log
 

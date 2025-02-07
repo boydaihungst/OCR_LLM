@@ -73,6 +73,14 @@ cp -lR /usr/include/vapoursynth/*.h ./vapoursynth-autocrop/
 g++ -std=c++11 -shared -fPIC -O2 ./autocrop.cpp -o /usr/lib/vapoursynth/libautocrop.so
 ```
 
+Step 8: Install npm + chrome-lens-ocr
+
+```sh
+npm install -g chrome-lens-ocr
+# or
+yarn global add chrome-lens-ocr
+```
+
 ## Usage
 
 ### Prepare two media sources.
@@ -82,7 +90,22 @@ g++ -std=c++11 -shared -fPIC -O2 ./autocrop.cpp -o /usr/lib/vapoursynth/libautoc
 
 Two sources must be synchronized. If not, adjust offset arguments.
 
-### Create LLM API in google colab
+### Option 1: Using google lens (Faster)
+
+#### Using chrome-lens-ocr + nodejs
+
+Step 1. Install nodejs
+
+Step 2.
+
+```sh
+git clone https://github.com/boydaihungst/chrome-lens-ocr
+cd chrome-lens-ocr && npm install && cd ..
+```
+
+### Option 2: Using LLM API (Very slow)
+
+#### Create LLM API in google colab
 
 - Get ngrok auth token: [https://dashboard.ngrok.com/get-started/setup](https://dashboard.ngrok.com/get-started/setup)
   The token is behind `add-authtoken`
@@ -107,7 +130,12 @@ Two sources must be synchronized. If not, adjust offset arguments.
 # Follow Step 5: Activate the Virtual Environment, then run the command below to ocr
 # The api url is from google colab
 # Any media extensions should works (mp4, mkv, ts, etc)
+
+# Using LLM API
 python ocr.py clean.mkv sub.ts --llm-api "https://7ceb-34-19-47-52.ngrok-free.app/ocr"
+
+# Using google lens
+python ocr.py clean.mkv sub.ts
 ```
 
 For more.
@@ -130,4 +158,3 @@ Rewrite this spaghetti.
 - [JET](https://github.com/Jaded-Encoding-Thaumaturgy)
 - [image-ocr-google-docs-srt](https://github.com/Abu3safeer/image-ocr-google-docs-srt)
 - [LunaTranslator](https://github.com/HIllya51/LunaTranslator/blob/main/LunaTranslator/LunaTranslator/ocrengines/googlelens.py)
-
