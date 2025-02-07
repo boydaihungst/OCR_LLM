@@ -1,5 +1,7 @@
 hls_downloaded/
 images/
+.venv/
+.ipynb_checkpoints/
 a.m3u8
 *.log
 
