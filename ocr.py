@@ -237,16 +237,31 @@ class Lens:
         files = {
             "encoded_image": ("screenshot.png", (open(img_path, 'rb')), "image/png")
         }
-
-        res = self.client.post(self.LENS_ENDPOINT, 
-                         files=files, 
-                         headers=self.HEADERS, 
-                         params=self.PARAMS, 
-                         cookies=self.COOKIES,
-                         timeout=40)
-
-        if res.status_code != 200:
-            raise Exception(f"Failed to upload image. Status code: {res.status_code}")
+        
+        max_retries = 3
+        last_exception = None
+        for attempt in range(max_retries):
+            try:
+                res = self.client.post(
+                    self.LENS_ENDPOINT,
+                    files=files,
+                    headers=self.HEADERS,
+                    params=self.PARAMS,
+                    cookies=self.COOKIES,
+                    timeout=40
+                )
+                
+                if res.status_code == 200:
+                    break
+                    
+                raise Exception(f"Request failed with status code: {res.status_code}")
+                
+            except Exception as e:
+                last_exception = e
+                print(f"Attempt {attempt + 1} failed. Retrying...")
+                if attempt == max_retries - 1:
+                    raise Exception(f"Failed to upload image after {max_retries} attempts. Last error: {str(last_exception)}")
+                continue
 
         tree = lxml.html.parse(StringIO(res.text))
         r = tree.xpath("//script[@class='ds:1']")
