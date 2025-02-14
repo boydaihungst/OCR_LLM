@@ -40,9 +40,9 @@ class SRTSubtitle:
 class Lens:
     fake_chromium_config = {
             "viewport": (1920, 1080),
-            "major_version": "109",
-            "version": "109.0.5414.87",
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.5414.87 Safari/537.36",
+            "major_version": "131",
+            "version": "131.0.6778.205",
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
         }
     
     LENS_ENDPOINT = f"https://lens.google.com/v3/upload"
@@ -78,7 +78,7 @@ class Lens:
             "Sec-Fetch-Site": "same-origin",
             "Sec-Fetch-User": "?1",
             "Upgrade-Insecure-Requests": "1",
-            # "User-Agent": fake_chromium_config["user_agent"],
+            "User-Agent": fake_chromium_config["user_agent"],
             "X-Client-Data": "CIW2yQEIorbJAQipncoBCIH+ygEIkqHLAQiKo8sBCPWYzQEIhaDNAQji0M4BCLPTzgEI19TOAQjy1c4BCJLYzgEIwNjOAQjM2M4BGM7VzgE=",
         }
 
@@ -130,6 +130,7 @@ class Lens:
         r = tree.xpath("//script[@class='ds:1']")
         lens_object = json5.loads(r[0].text[len("AF_initDataCallback("):-2])
         data = lens_object['data']
+        print(data)
 
         try:
             text = data[3][4][0][0]
