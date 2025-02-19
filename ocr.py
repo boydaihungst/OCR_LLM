@@ -130,7 +130,6 @@ class Lens:
         r = tree.xpath("//script[@class='ds:1']")
         lens_object = json5.loads(r[0].text[len("AF_initDataCallback("):-2])
         data = lens_object['data']
-        print(data)
 
         try:
             text = data[3][4][0][0]
