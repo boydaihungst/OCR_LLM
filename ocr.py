@@ -27,15 +27,21 @@ class OCRSpeedColumn(ProgressColumn):
         return Text(f"{task.speed or 0:.02f} images/s")
 
 
-class SRTSubtitle:
-    def __init__(self, line_number, start_time, end_time, text_content):
+class AssSubtitle:
+    def __init__(self, line_number, start_time, end_time, text_content, is_sign=False):
         self.line_number = line_number
         self.start_time = start_time
         self.end_time = end_time
         self.text_content = text_content
+        self.style_name = "Top" if is_sign else "Default"
+
+    def convert_timestamp(self, s: str):
+        h, m, rest = s.split(":")
+        s, ms = rest.split(",")
+        return f"{h}:{m}:{s}.{ms}"
 
     def __str__(self):
-        return f"{self.line_number}\n{self.start_time} --> {self.end_time}\n{self.text_content}\n\n"
+        return f"Dialogue: 0,{self.convert_timestamp(self.start_time)},{self.convert_timestamp(self.end_time)},{self.style_name},,0,0,0,,{self.text_content}\n"
 
 
 class Lens:
@@ -163,11 +169,20 @@ class Lens:
             "Zs",  # Space separator
         }
 
-        result = ""
+        result = []
+
         for char in text:
-            if unicodedata.category(char) in allowed_categories:
-                result += char
-        return result.strip()
+            category = unicodedata.category(char)
+
+            if category in allowed_categories:
+                result.append(char)
+
+        cleaned_text = "".join(result).strip()
+
+        # Ensure no more than one consecutive whitespace (extra safety)
+        cleaned_text = re.sub(r"\s{2,}", " ", cleaned_text)
+
+        return cleaned_text
 
     def _apply_punctuation_and_spacing(self, text: str) -> str:
         # Remove extra spaces before punctuation
@@ -191,13 +206,13 @@ class OCR_Subtitles:
     THREADS = 10
     IMAGE_EXTENSIONS = ("*.jpeg", "*.jpg", "*.png", "*.bmp", "*.gif")
 
-    def __init__(self, images_dir: Path, srt_file: Path) -> None:
+    def __init__(self, images_dir: Path, ass_file: Path) -> None:
         self.images: List[str] = []
-        self.srt_dict: Dict[str, SRTSubtitle] = {}
+        self.ass_dict: Dict[int, AssSubtitle] = {}
         self.scan_lock: Lock = Lock()
         self.lens: Lens = Lens()
         self.images_dir: Path = images_dir
-        self.srt_file: Path = srt_file
+        self.ass_file: Path = ass_file
         self.completed_scans: int = 0
 
     def ocr(self):
@@ -221,7 +236,7 @@ class OCR_Subtitles:
             task: TaskID = progress.add_task("OCR images", total=total_images)
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.THREADS) as executor:
                 future_to_image = {
-                    executor.submit(self._process_image, image, index + 1): image
+                    executor.submit(self._process_image, Path(image), index + 1): image
                     for index, image in enumerate(self.images)
                 }
                 for future in concurrent.futures.as_completed(future_to_image):
@@ -234,7 +249,7 @@ class OCR_Subtitles:
                         with self.scan_lock:
                             self.completed_scans += 1
                             progress.update(task, advance=1)
-        self._write_srt()
+        self._write_ass()
 
     def _process_image(self, image: Path, line: int):
         img_filename = str(image.absolute())
@@ -245,17 +260,33 @@ class OCR_Subtitles:
         except Exception as e:
             print(f"Error processing {img_name}: {e}")
             text = ""
+            is_sign = False
 
         try:
-            start_hour = img_name.split("_")[0][:2]
-            start_min = img_name.split("_")[1][:2]
-            start_sec = img_name.split("_")[2][:2]
-            start_micro = img_name.split("_")[3][:3]
+            # Case filename = top/bot_time
+            if img_name.split("_")[0] == "top" or img_name.split("_")[0] == "bot":
+                is_sign = img_name.split("_")[0] == "top"
+                start_hour = img_name.split("_")[1][:2]
+                start_min = img_name.split("_")[2][:2]
+                start_sec = img_name.split("_")[3][:2]
+                start_micro = img_name.split("_")[4][:3]
 
-            end_hour = img_name.split("__")[1].split("_")[0][:2]
-            end_min = img_name.split("__")[1].split("_")[1][:2]
-            end_sec = img_name.split("__")[1].split("_")[2][:2]
-            end_micro = img_name.split("__")[1].split("_")[3][:3]
+                end_hour = img_name.split("__")[1].split("_")[0][:2]
+                end_min = img_name.split("__")[1].split("_")[1][:2]
+                end_sec = img_name.split("__")[1].split("_")[2][:2]
+                end_micro = img_name.split("__")[1].split("_")[3][:3]
+            # Case filename = time. Backward compatibility
+            else:
+                is_sign = False
+                start_hour = img_name.split("_")[0][:2]
+                start_min = img_name.split("_")[1][:2]
+                start_sec = img_name.split("_")[2][:2]
+                start_micro = img_name.split("_")[3][:3]
+
+                end_hour = img_name.split("__")[1].split("_")[0][:2]
+                end_min = img_name.split("__")[1].split("_")[1][:2]
+                end_sec = img_name.split("__")[1].split("_")[2][:2]
+                end_micro = img_name.split("__")[1].split("_")[3][:3]
         except IndexError:
             print(
                 f"Error processing {img_name}: Filename format is incorrect. Please ensure the correct format is used."
@@ -265,36 +296,52 @@ class OCR_Subtitles:
         start_time = f"{start_hour}:{start_min}:{start_sec},{start_micro}"
         end_time = f"{end_hour}:{end_min}:{end_sec},{end_micro}"
 
-        subtitle = SRTSubtitle(line, start_time, end_time, text)
-        self.srt_dict[line] = subtitle
+        subtitle = AssSubtitle(line, start_time, end_time, text, is_sign)
+        self.ass_dict[line] = subtitle
 
-    def _write_srt(self):
-        cleaned_srt = []
+    def _write_ass(self):
+        cleaned_ass = []
         previous_subtitle = None
-        for _, subtitle in sorted(self.srt_dict.items()):
+        for _, subtitle in sorted(self.ass_dict.items()):
             if not previous_subtitle:
-                cleaned_srt.append(subtitle)
+                cleaned_ass.append(subtitle)
                 previous_subtitle = subtitle
                 continue
             if not subtitle.text_content or subtitle.text_content.isspace():
                 continue
             if previous_subtitle.text_content == subtitle.text_content:
-                merged_subtitle = SRTSubtitle(
+                merged_subtitle = AssSubtitle(
                     line_number=previous_subtitle.line_number,
                     start_time=previous_subtitle.start_time,
                     end_time=subtitle.end_time,
                     text_content=previous_subtitle.text_content,
                 )
-                cleaned_srt.pop()
-                cleaned_srt.append(merged_subtitle)
+                cleaned_ass.pop()
+                cleaned_ass.append(merged_subtitle)
             else:
                 subtitle.line = previous_subtitle.line_number + 1
-                cleaned_srt.append(subtitle)
-            previous_subtitle = cleaned_srt[-1]
+                cleaned_ass.append(subtitle)
+            previous_subtitle = cleaned_ass[-1]
+        self.ass_file.write(
+            f"""[Script Info]
+ScriptType: v4.00+
+PlayDepth: 0
+ScaledBorderAndShadow: Yes
+PlayResX: 1920
+PlayResY: 1080
 
-        for subtitle in cleaned_srt:
-            self.srt_file.write(str(subtitle))
-        self.srt_file.close()
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,60,&H00FFFFFF,&H00000000,&H4D000000,&H81000000,-1,0,0,0,100,100,0,0,1,3,0,2,60,60,40,1
+Style: Top,Arial,60,&H00FFFFFF,&H00000000,&H4D000000,&H81000000,-1,0,0,0,100,100,0,0,1,3,0,8,60,60,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        )
+        for subtitle in cleaned_ass:
+            self.ass_file.write(str(subtitle))
+        self.ass_file.close()
 
 
 def find_matching_files(directory: str, hardsub_pattern: str, clean_pattern: str) -> Dict[str, Dict[str, str]]:
@@ -338,13 +385,13 @@ def process_episode(
     else:
         images_dir = Path(images_dir)
 
-    output_file = Path(f"{current_directory}/{output_subtitles}.srt")
+    output_file = Path(f"{current_directory}/{output_subtitles}.ass")
     counter = 1
     while output_file.exists():
-        output_file = Path(f"{current_directory}/{output_subtitles}_{counter}.srt")
+        output_file = Path(f"{current_directory}/{output_subtitles}_{counter}.ass")
         counter += 1
 
-    srt_file = open(output_file, "w", encoding="utf-8")
+    ass_file = open(output_file, "w", encoding="utf-8")
 
     if do_filter:
         from filter import Filter
@@ -356,7 +403,7 @@ def process_episode(
         filter = Filter(clean_path, offset_clean, sub_path, offset_sub, images_dir)
         filter.filter_videos()
 
-    engine = OCR_Subtitles(images_dir, srt_file)
+    engine = OCR_Subtitles(images_dir, ass_file)
     engine.ocr()
 
 

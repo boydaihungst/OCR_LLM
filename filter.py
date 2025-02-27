@@ -117,7 +117,8 @@ class Filter:
 
     def _rename_images(self, scene_changes: List[Tuple[int, int, str]], fpsnum: int, fpsden: int):
         for scene_change in scene_changes:
-            filename = self._format_frame_time(scene_change[0], scene_change[1], fpsnum, fpsden)
+            # Concat location (top, bot) to filename
+            filename = f"{scene_change[2]}_{self._format_frame_time(scene_change[0], scene_change[1], fpsnum, fpsden)}"
             dst_path = Path(f"{self.images_dir}/{filename}.jpg")
             i = 1
             while dst_path.exists():
