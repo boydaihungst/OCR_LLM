@@ -28,8 +28,7 @@ class OCRSpeedColumn(ProgressColumn):
 
 
 class AssSubtitle:
-    def __init__(self, line_number, start_time, end_time, text_content, is_sign=False):
-        self.line_number = line_number
+    def __init__(self, start_time, end_time, text_content, is_sign=False):
         self.start_time = start_time
         self.end_time = end_time
         self.text_content = text_content
@@ -296,32 +295,43 @@ class OCR_Subtitles:
         start_time = f"{start_hour}:{start_min}:{start_sec},{start_micro}"
         end_time = f"{end_hour}:{end_min}:{end_sec},{end_micro}"
 
-        subtitle = AssSubtitle(line, start_time, end_time, text, is_sign)
+        subtitle = AssSubtitle(start_time, end_time, text, is_sign)
         self.ass_dict[line] = subtitle
 
     def _write_ass(self):
-        cleaned_ass = []
-        previous_subtitle = None
+        cleaned_ass_bot = []
+        cleaned_ass_top = []
+        previous_subtitle_bot = None
+        previous_subtitle_top = None
         for _, subtitle in sorted(self.ass_dict.items()):
-            if not previous_subtitle:
-                cleaned_ass.append(subtitle)
-                previous_subtitle = subtitle
-                continue
+            is_top = subtitle.style_name == "Top"
+            previous_subtitle = previous_subtitle_top if is_top else previous_subtitle_bot
+            cleaned_ass = cleaned_ass_top if is_top else cleaned_ass_bot
             if not subtitle.text_content or subtitle.text_content.isspace():
                 continue
-            if previous_subtitle.text_content == subtitle.text_content:
+            if not previous_subtitle:
+                cleaned_ass.append(subtitle)
+                if is_top:
+                    previous_subtitle_top = subtitle
+                else:
+                    previous_subtitle_bot = subtitle
+                continue
+            if previous_subtitle.text_content.lower() == subtitle.text_content.lower():
                 merged_subtitle = AssSubtitle(
-                    line_number=previous_subtitle.line_number,
                     start_time=previous_subtitle.start_time,
                     end_time=subtitle.end_time,
                     text_content=previous_subtitle.text_content,
+                    is_sign=is_top,
                 )
                 cleaned_ass.pop()
                 cleaned_ass.append(merged_subtitle)
             else:
-                subtitle.line = previous_subtitle.line_number + 1
                 cleaned_ass.append(subtitle)
-            previous_subtitle = cleaned_ass[-1]
+
+            if is_top:
+                previous_subtitle_top = cleaned_ass[-1]
+            else:
+                previous_subtitle_bot = cleaned_ass[-1]
         self.ass_file.write(
             f"""[Script Info]
 ScriptType: v4.00+
@@ -339,7 +349,7 @@ Style: Top,Arial,60,&H00FFFFFF,&H00000000,&H4D000000,&H81000000,-1,0,0,0,100,100
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         )
-        for subtitle in cleaned_ass:
+        for subtitle in cleaned_ass_bot + cleaned_ass_top:
             self.ass_file.write(str(subtitle))
         self.ass_file.close()
 
