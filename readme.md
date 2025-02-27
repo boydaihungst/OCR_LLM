@@ -62,15 +62,16 @@ python ./vsrepo/vsrepo.py install acrop hysteresis lsmas misc tcanny tedgemask r
 
 # For Arch linux
 yay -S vapoursynth-plugin-imwri-git vapoursynth-plugin-lsmashsource-git vapoursynth-plugin-misc-git vapoursynth-plugin-resize2-git vapoursynth-plugin-tcanny-git vapoursynth-plugin-tedgemask-git
+git clone https://github.com/vapoursynth/vsrepo
 python ./vsrepo/vsrepo.py install hysteresis
 # copy hysteresis plugin to shared lib folder
 sudo cp -R ~/.local/lib/vapoursynth/*.so /usr/lib/vapoursynth/
 # The following commands to build acrop plugin
 git clone https://github.com/Irrational-Encoding-Wizardry/vapoursynth-autocrop
 # Link C interfaces to build acrop
-cp -lR /usr/include/vapoursynth/*.h ./vapoursynth-autocrop/
+cp -R /usr/include/vapoursynth/*.h ./vapoursynth-autocrop/
 # Build and install acrop plugin
-g++ -std=c++11 -shared -fPIC -O2 ./autocrop.cpp -o /usr/lib/vapoursynth/libautocrop.so
+cd ./vapoursynth-autocrop/ && sudo g++ -std=c++11 -shared -fPIC -O2 ./autocrop.cpp -o /usr/lib/vapoursynth/libautocrop.so && cd ..
 ```
 
 Step 8: Install npm + chrome-lens-ocr
