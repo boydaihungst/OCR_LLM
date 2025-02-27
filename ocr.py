@@ -28,11 +28,11 @@ class OCRSpeedColumn(ProgressColumn):
 
 
 class AssSubtitle:
-    def __init__(self, start_time, end_time, text_content, is_sign=False):
+    def __init__(self, start_time, end_time, text_content, is_top=False):
         self.start_time = start_time
         self.end_time = end_time
         self.text_content = text_content
-        self.style_name = "Top" if is_sign else "Default"
+        self.style_name = "Top" if is_top else "Default"
 
     def convert_timestamp(self, s: str):
         h, m, rest = s.split(":")
@@ -259,12 +259,12 @@ class OCR_Subtitles:
         except Exception as e:
             print(f"Error processing {img_name}: {e}")
             text = ""
-            is_sign = False
+            is_top = False
 
         try:
             # Case filename = top/bot_time
             if img_name.split("_")[0] == "top" or img_name.split("_")[0] == "bot":
-                is_sign = img_name.split("_")[0] == "top"
+                is_top = img_name.split("_")[0] == "top"
                 start_hour = img_name.split("_")[1][:2]
                 start_min = img_name.split("_")[2][:2]
                 start_sec = img_name.split("_")[3][:2]
@@ -276,7 +276,7 @@ class OCR_Subtitles:
                 end_micro = img_name.split("__")[1].split("_")[3][:3]
             # Case filename = time. Backward compatibility
             else:
-                is_sign = False
+                is_top = False
                 start_hour = img_name.split("_")[0][:2]
                 start_min = img_name.split("_")[1][:2]
                 start_sec = img_name.split("_")[2][:2]
@@ -295,7 +295,7 @@ class OCR_Subtitles:
         start_time = f"{start_hour}:{start_min}:{start_sec},{start_micro}"
         end_time = f"{end_hour}:{end_min}:{end_sec},{end_micro}"
 
-        subtitle = AssSubtitle(start_time, end_time, text, is_sign)
+        subtitle = AssSubtitle(start_time, end_time, text, is_top)
         self.ass_dict[line] = subtitle
 
     def _write_ass(self):
@@ -321,7 +321,7 @@ class OCR_Subtitles:
                     start_time=previous_subtitle.start_time,
                     end_time=subtitle.end_time,
                     text_content=previous_subtitle.text_content,
-                    is_sign=is_top,
+                    is_top=is_top,
                 )
                 cleaned_ass.pop()
                 cleaned_ass.append(merged_subtitle)
