@@ -33,6 +33,7 @@ class AssSubtitle:
         self.end_time = end_time
         self.text_content = text_content
         self.style_name = "Top" if is_top else "Default"
+        self.is_top = is_top
 
     def convert_timestamp(self, s: str):
         h, m, rest = s.split(":")
@@ -304,14 +305,13 @@ class OCR_Subtitles:
         previous_subtitle_bot = None
         previous_subtitle_top = None
         for _, subtitle in sorted(self.ass_dict.items()):
-            is_top = subtitle.style_name == "Top"
-            previous_subtitle = previous_subtitle_top if is_top else previous_subtitle_bot
-            cleaned_ass = cleaned_ass_top if is_top else cleaned_ass_bot
+            previous_subtitle = previous_subtitle_top if subtitle.is_top else previous_subtitle_bot
+            cleaned_ass = cleaned_ass_top if subtitle.is_top else cleaned_ass_bot
             if not subtitle.text_content or subtitle.text_content.isspace():
                 continue
             if not previous_subtitle:
                 cleaned_ass.append(subtitle)
-                if is_top:
+                if subtitle.is_top:
                     previous_subtitle_top = subtitle
                 else:
                     previous_subtitle_bot = subtitle
@@ -321,14 +321,14 @@ class OCR_Subtitles:
                     start_time=previous_subtitle.start_time,
                     end_time=subtitle.end_time,
                     text_content=previous_subtitle.text_content,
-                    is_top=is_top,
+                    is_top=subtitle.is_top,
                 )
                 cleaned_ass.pop()
                 cleaned_ass.append(merged_subtitle)
             else:
                 cleaned_ass.append(subtitle)
 
-            if is_top:
+            if subtitle.is_top:
                 previous_subtitle_top = cleaned_ass[-1]
             else:
                 previous_subtitle_bot = cleaned_ass[-1]
