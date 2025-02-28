@@ -121,7 +121,9 @@ For more.
 python ocr.py --help
 ```
 
-Preview.
+For non-Muse sources, it is necessary to adjust the crop parameters to an
+subtitles area, also may need to adjust SceneDetect threshold. In filter.py with preview.
+
 Modify Filter function at the end of `filter.py` file.
 ```python
 filter = Filter(r"clean.mkv", 0, r"sub.mkv", 0, images_dir=Path("images"))
@@ -130,15 +132,14 @@ filter = Filter(r"clean.mkv", 0, r"sub.mkv", 0, images_dir=Path("images"))
 python -m vspreview filter.py
 ```
 
-For non-Muse sources, it is necessary to adjust the crop parameters to an
-subtitles area, also may need to adjust SceneDetect threshold.
-
 If two sources is hard to sync, then use VSF instead to generate clear images
-then put it into `images` folder. After that use this tool with `--no-filter` args.
+then put it into `images` folder. After that use this tool with `--no-filter` args. 
+With this you no need to install vapoursynth.
 
 ## TODO
 
-Rewrite this spaghetti.
+- Support VideoSubFinder.
+- Better batch support and docs for batch mode.
 
 ## Acknowledgement
 
