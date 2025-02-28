@@ -92,3 +92,5 @@ debug.log
 Thumbs.db
 desktop.ini
 
+# vsjet
+.vsjet/

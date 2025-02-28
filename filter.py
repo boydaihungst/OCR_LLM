@@ -147,6 +147,6 @@ class Filter:
 
 
 if is_preview():
-    filter = Filter(r"clean.mkv", 0, r"sub.mkv", 0)
+    filter = Filter(r"clean.mkv", 0, r"sub.mkv", 0, images_dir=Path("images"))
     filter.filter_videos()
 
