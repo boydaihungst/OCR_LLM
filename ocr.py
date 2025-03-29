@@ -133,19 +133,25 @@ class GoogleLens:
             response_dict: dict[str, Any] = response_proto.to_dict()
 
             result: str = ''
-            text = response_dict['objectsResponse']['text']['textLayout']['paragraphs'] 
-            for paragraph in text:
-                for line in paragraph['lines']:
-                    for word in line['words']:
-                        result += word['plainText'] + word['textSeparator']
-                result += '\n'
-
+            paragraphs = response_dict.get('objectsResponse', {}).get('text', {}).get('textLayout', {}).get('paragraphs', []) 
+            if not paragraphs:
+                print(f"Empty OCR please check subtitle {img_path}")
+            separator = '\\n '
+            for index, paragraph in enumerate(paragraphs):
+                if index > 0:
+                    result += separator
+                for line in paragraph.get('lines', []):
+                    for word in line.get('words', []):
+                        plain_text = word.get('plainText', '')
+                        separator_text = word.get('textSeparator', '')
+                        result += plain_text + separator_text        
+            
             return result
         
 
 
 class OCR_Subtitles:
-    THREADS: int = 10
+    THREADS: int = 16
     IMAGE_EXTENSIONS: tuple[Literal['*.jpeg'], Literal['*.jpg'], Literal['*.png'], Literal['*.bmp'], Literal['*.gif']] = ("*.jpeg", "*.jpg", "*.png", "*.bmp", "*.gif")
 
     def __init__(self, images_dir: Path, output_file_path: Path) -> None:
