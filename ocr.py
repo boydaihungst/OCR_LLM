@@ -1,14 +1,12 @@
 import argparse
 import concurrent.futures
 import glob
+import random
 import re
-import time
-import unicodedata
-from io import StringIO
 from pathlib import Path
 from shutil import rmtree
 from threading import Lock
-from typing import Dict, List, Optional
+from typing import Any, Literal, override
 
 from httpx import Client
 from rich.console import Console
@@ -23,7 +21,8 @@ from utils import Utils
 ### OCR PART
 class OCRSpeedColumn(ProgressColumn):
     """Progress rendering."""
-
+    
+    @override
     def render(self, task: Task) -> Text:
         """Render bar."""
 
@@ -31,18 +30,19 @@ class OCRSpeedColumn(ProgressColumn):
 
 
 class AssSubtitle:
-    def __init__(self, start_time, end_time, text_content, is_top=False):
-        self.start_time = start_time
-        self.end_time = end_time
-        self.text_content = text_content
-        self.style_name = "Top" if is_top else "Default"
-        self.is_top = is_top
+    def __init__(self, start_time: str, end_time: str, text_content: str, is_top: bool=False):
+        self.start_time: str = start_time
+        self.end_time: str = end_time
+        self.text_content: str = text_content
+        self.style_name: str = "Top" if is_top else "Default"
+        self.is_top: bool = is_top
 
     def convert_timestamp(self, s: str):
         h, m, rest = s.split(":")
         s, ms = rest.split(",")
         return f"{h}:{m}:{s}.{ms}"
 
+    @override
     def __str__(self):
         return f"Dialogue: 0,{self.convert_timestamp(self.start_time)},{self.convert_timestamp(self.end_time)},{self.style_name},,0,0,0,,{self.text_content}\n"
 
@@ -145,23 +145,26 @@ class GoogleLens:
 
 
 class OCR_Subtitles:
-    THREADS = 10
-    IMAGE_EXTENSIONS = ("*.jpeg", "*.jpg", "*.png", "*.bmp", "*.gif")
+    THREADS: int = 10
+    IMAGE_EXTENSIONS: tuple[Literal['*.jpeg'], Literal['*.jpg'], Literal['*.png'], Literal['*.bmp'], Literal['*.gif']] = ("*.jpeg", "*.jpg", "*.png", "*.bmp", "*.gif")
 
-    def __init__(self, images_dir: Path, ass_file: Path) -> None:
-        self.images: List[str] = []
-        self.ass_dict: Dict[int, AssSubtitle] = {}
+    def __init__(self, images_dir: Path, output_file_path: Path) -> None:
+        self.images: list[str] = []
+        self.ass_dict: dict[int, AssSubtitle] = {}
         self.scan_lock: Lock = Lock()
-        self.lens: Lens = Lens()
+        self.lens: GoogleLens = GoogleLens()
         self.images_dir: Path = images_dir
-        self.ass_file: Path = ass_file
+        self.output_file_path: Path = output_file_path
         self.completed_scans: int = 0
 
     def ocr(self):
         self.completed_scans = 0
 
         for extension in self.IMAGE_EXTENSIONS:
-            self.images.extend(list(self.images_dir.rglob(extension)))
+            paths = self.images_dir.rglob(f"*{extension}")
+            string_paths = [str(p) for p in paths]
+            self.images.extend(string_paths)
+            # self.images.extend(list(self.images_dir.rglob(extension)))
 
         total_images = len(self.images)
 
@@ -198,11 +201,13 @@ class OCR_Subtitles:
         img_name = str(image.name)
 
         try:
-            text = self.lens.lens_ocr(img_filename)
+            text = self.lens(img_filename)
         except Exception as e:
             print(f"Error processing {img_name}: {e}")
             text = ""
             is_top = False
+        if text is None:
+            text = ""
 
         try:
             # Case filename = top/bot_time
@@ -238,7 +243,7 @@ class OCR_Subtitles:
         start_time = f"{start_hour}:{start_min}:{start_sec},{start_micro}"
         end_time = f"{end_hour}:{end_min}:{end_sec},{end_micro}"
 
-        subtitle = AssSubtitle(start_time, end_time, text, is_top)
+        subtitle: AssSubtitle = AssSubtitle(start_time, end_time, text, is_top)
         self.ass_dict[line] = subtitle
 
     def _write_ass(self):
@@ -274,8 +279,7 @@ class OCR_Subtitles:
                 previous_subtitle_top = cleaned_ass[-1]
             else:
                 previous_subtitle_bot = cleaned_ass[-1]
-        self.ass_file.write(
-            f"""[Script Info]
+        ass_header = """[Script Info]
 ScriptType: v4.00+
 PlayDepth: 0
 ScaledBorderAndShadow: Yes
@@ -290,16 +294,23 @@ Style: Top,Arial,60,&H00FFFFFF,&H00000000,&H4D000000,&H81000000,-1,0,0,0,100,100
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-        )
-        for subtitle in cleaned_ass_bot + cleaned_ass_top:
-            self.ass_file.write(str(subtitle))
-        self.ass_file.close()
+        try:
+            
+            with self.output_file_path.open("w", encoding="utf-8") as ass_file:
+                _ = ass_file.write(ass_header)
+                for subtitle in cleaned_ass_bot + cleaned_ass_top:
+                    _ = ass_file.write(str(subtitle))
+        except IOError as e:
+            print(f"Error writing to output file {self.output_file_path}: {e}")
+            raise
+
+        
 
 
-def find_matching_files(directory: str, hardsub_pattern: str, clean_pattern: str) -> Dict[str, Dict[str, str]]:
+def find_matching_files(directory: str, hardsub_pattern: str, clean_pattern: str) -> dict[str, dict[str, str]]:
     all_files = glob.glob(f"{directory}/*")
 
-    episodes: Dict[str, Dict[str, str]] = {}
+    episodes: dict[str, dict[str, str]] = {}
 
     for file in all_files:
         file_name = Path(file).name
@@ -323,40 +334,68 @@ def find_matching_files(directory: str, hardsub_pattern: str, clean_pattern: str
 
 
 def process_episode(
-    clean_path: Optional[str],
-    sub_path: Optional[str],
-    images_dir: Optional[str],
-    output_subtitles: str,
+    output_subtitles_base: str,        # Renamed for clarity (base name without extension)
     offset_clean: int,
     offset_sub: int,
+    clean_path: str | None = None,
+    sub_path: str | None = None,
+    images_dir_override: str | None = None, # Renamed for clarity
     do_filter: bool = True,
 ) -> None:
-    current_directory = Path(Path.cwd())
-    if not images_dir:
-        images_dir = Path(f"{current_directory}/images")
-    else:
-        images_dir = Path(images_dir)
+    """
+    Processes video files to generate ASS subtitles using OCR.
 
-    output_file = Path(f"{current_directory}/{output_subtitles}.ass")
-    counter = 1
-    while output_file.exists():
-        output_file = Path(f"{current_directory}/{output_subtitles}_{counter}.ass")
-        counter += 1
+    Args:
+        output_subtitles_base: Base name for the output .ass file (without extension).
+        offset_clean: Offset in frame for the clean video/subtitles.
+        offset_sub: Offset in frame for the subtitled video.
+        clean_path: Path to the 'clean' video file (no hardsubs). Required if do_filter=True.
+        sub_path: Path to the video file with hardsubs. Required if do_filter=True.
+        images_dir_override: Specific directory to use for temporary images.
+                             Defaults to './images' in the current working directory.
+        do_filter: Whether to run the filtering step (extracting images from videos).
+                   Defaults to True.
+    """
+    try:
+        base_directory = Path.cwd()
+        print(f"Using base directory: {base_directory}")
 
-    ass_file = open(output_file, "w", encoding="utf-8")
+        if images_dir_override:
+            images_dir = Path(images_dir_override).resolve() # Resolve to absolute path
+        else:
+            images_dir = (base_directory / "images").resolve()
+        print(f"Target images directory: {images_dir}")
 
-    if do_filter:
-        from filter import Filter
+        counter = 0
+        output_file_path: Path = base_directory / f"{output_subtitles_base}.ass"
+        while output_file_path.exists():
+            counter += 1
+            output_file_path = base_directory / f"{output_subtitles_base}_{counter}.ass"
+        print(f"Output file will be: {output_file_path}")
 
-        if images_dir.exists():
-            rmtree(images_dir)
-        images_dir.mkdir()
+        if do_filter:
+            from filter import Filter
 
-        filter = Filter(clean_path, offset_clean, sub_path, offset_sub, images_dir)
-        filter.filter_videos()
+            if not clean_path or not sub_path:
+                raise ValueError("clean_path and sub_path arguments are required when do_filter is True.")
 
-    engine = OCR_Subtitles(images_dir, ass_file)
-    engine.ocr()
+            if images_dir.exists():
+                print(f"Removing existing images directory: {images_dir}")
+                try:
+                    rmtree(images_dir)
+                except OSError as e:
+                    print(f"Warning: Failed to remove directory {images_dir}. Error: {e}")
+            images_dir.mkdir(parents=True, exist_ok=True)
+
+            filter = Filter(clean_path, offset_clean, sub_path, offset_sub, images_dir)
+            filter.filter_videos()
+
+        engine = OCR_Subtitles(images_dir=images_dir, output_file_path=output_file_path)
+        engine.ocr()
+    except (FileNotFoundError, ValueError, ImportError, IOError, Exception) as e:
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {e}")
+        raise
 
 
 def batch_process(directory: str, hardsub_pattern: str, clean_pattern: str, offset_clean: int, offset_sub: int) -> None:
@@ -368,12 +407,12 @@ def batch_process(directory: str, hardsub_pattern: str, clean_pattern: str, offs
             output_subtitles = f"output_subtitles_ep{episode}"
             images_dir = f"{directory}/images_{episode}"
             process_episode(
-                clean_path=files["clean"],
-                sub_path=files["hardsub"],
-                images_dir=images_dir,
-                output_subtitles=output_subtitles,
+                output_subtitles_base=output_subtitles,
                 offset_clean=offset_clean,
                 offset_sub=offset_sub,
+                clean_path=files["clean"],
+                sub_path=files["hardsub"],
+                images_dir_override=images_dir,
                 do_filter=True,
             )
         else:
@@ -384,7 +423,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="A tool to OCR subtitles from video files, supporting both single-file and batch processing modes."
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "-o",
         "--output",
         default="output_subtitles",
@@ -392,16 +431,16 @@ def create_arg_parser() -> argparse.ArgumentParser:
         metavar="<outputname>",
         help="Base name for output subtitle files. In batch mode, episode numbers will be appended.",
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--filter",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Enable or disable the filtering and image generation step. Default: enabled",
     )
 
-    parser.add_argument("--batch", action="store_true", help="Enable batch processing mode to handle multiple episodes")
+    _ = parser.add_argument("--batch", action="store_true", help="Enable batch processing mode to handle multiple episodes")
 
-    parser.add_argument(
+    _ = parser.add_argument(
         "--directory",
         type=str,
         metavar="<dir>",
@@ -409,7 +448,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
         help="Directory containing video files for batch processing",
     )
 
-    parser.add_argument(
+    _ = parser.add_argument(
         "--clean-offset",
         default=0,
         type=int,
@@ -418,7 +457,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
         help="Frame offset for clean video. Default: 0",
     )
 
-    parser.add_argument(
+    _ = parser.add_argument(
         "--hardsub-offset",
         default=0,
         type=int,
@@ -427,19 +466,19 @@ def create_arg_parser() -> argparse.ArgumentParser:
         help="Frame offset for hardsub video. Default: 0",
     )
 
-    parser.add_argument(
+    _ = parser.add_argument(
         "clean",
         nargs="?",
         metavar="<clean>",
-        help="In single-file mode: path to the clean source video. "
+        help="In single-file mode: path to the clean source video. " +
         "In batch mode: regex pattern for matching clean files, with episode number as group 1.",
     )
 
-    parser.add_argument(
+    _ = parser.add_argument(
         "hardsub",
         nargs="?",
         metavar="<hardsub>",
-        help="In single-file mode: path to the hardsub source video. "
+        help="In single-file mode: path to the hardsub source video. " +
         "In batch mode: regex pattern for matching hardsub files, with episode number as group 1.",
     )
 
@@ -462,22 +501,22 @@ if __name__ == "__main__":
                 parser.error("The 'clean' and 'sub' arguments are required when '--filter' is enabled.")
 
             process_episode(
-                clean_path=args.clean,
-                sub_path=args.hardsub,
-                images_dir=None,
-                output_subtitles=args.output_subtitles,
+                output_subtitles_base=args.output_subtitles,
                 offset_clean=args.offset_clean,
                 offset_sub=args.offset_sub,
+                sub_path=args.hardsub,
+                clean_path=args.clean,
+                images_dir_override=None,
                 do_filter=True,
             )
         else:
             process_episode(
-                clean_path=None,
-                sub_path=None,
-                images_dir=None,
-                output_subtitles=args.output_subtitles,
+                output_subtitles_base=args.output_subtitles,
                 offset_clean=args.offset_clean,
                 offset_sub=args.offset_sub,
+                clean_path=None,
+                sub_path=None,
+                images_dir_override=None,
                 do_filter=False,
             )
 
