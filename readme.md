@@ -146,5 +146,5 @@ With this you no need to install vapoursynth.
 - [VapourSynth](https://www.vapoursynth.com/doc/index.html)
 - [JET](https://github.com/Jaded-Encoding-Thaumaturgy)
 - [image-ocr-google-docs-srt](https://github.com/Abu3safeer/image-ocr-google-docs-srt)
-- [LunaTranslator](https://github.com/HIllya51/LunaTranslator/blob/main/src/LunaTranslator/ocrengines/googlelens.py)
+- [owocr](https://github.com/AuroraWright/owocr)
 

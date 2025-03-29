@@ -10,11 +10,14 @@ from shutil import rmtree
 from threading import Lock
 from typing import Dict, List, Optional
 
-import json5
-import lxml.html
 from httpx import Client
 from rich.console import Console
-from rich.progress import BarColumn, Progress, ProgressColumn, Task, TaskID, Text, TextColumn, TimeRemainingColumn
+from rich.progress import BarColumn, Progress, ProgressColumn, Task, TaskID, TextColumn, TimeRemainingColumn
+from rich.text import Text
+
+from lens import (AppliedFilter, LensOverlayFilterType, LensOverlayRoutingInfo, LensOverlayServerRequest,
+                  LensOverlayServerResponse, Platform, Surface,)
+from utils import Utils
 
 
 ### OCR PART
@@ -43,83 +46,77 @@ class AssSubtitle:
     def __str__(self):
         return f"Dialogue: 0,{self.convert_timestamp(self.start_time)},{self.convert_timestamp(self.end_time)},{self.style_name},,0,0,0,,{self.text_content}\n"
 
+class GoogleLens:
+    LENS_ENDPOINT: str = "https://lensfrontend-pa.googleapis.com/v1/crupload"
 
-class Lens:
-    fake_chromium_config = {
-        "viewport": (1920, 1080),
-        "major_version": "131",
-        "version": "131.0.6778.205",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    HEADERS: dict[str, str]  = {
+        'Host': 'lensfrontend-pa.googleapis.com',
+        'Connection': 'keep-alive',
+        'Content-Type': 'application/x-protobuf',
+        'X-Goog-Api-Key': 'AIzaSyDr2UxVnv_U85AbhhY8XSHSIavUW0DC-sY',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-Mode': 'no-cors',
+        'Sec-Fetch-Dest': 'empty',
+        'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
     }
-
-    LENS_ENDPOINT = f"https://lens.google.com/v3/upload"
-    COOKIES = {"SOCS": "CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"}
-    PARAMS = {
-        "ep": "ccm",  # EntryPoint
-        "re": "dcsp",  # RenderingEnvironment - DesktopChromeSurfaceProto
-        "s": "4",  # SurfaceProtoValue - Surface.CHROMIUM
-        "st": str(int(time.time() * 1000)),
-        "sideimagesearch": "1",
-        "vpw": str(fake_chromium_config["viewport"][0]),
-        "vph": str(fake_chromium_config["viewport"][1]),
-    }
-    HEADERS = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Cache-Control": "max-age=0",
-        "Origin": "https://lens.google.com",
-        "Referer": "https://lens.google.com/",
-        "Sec-Ch-Ua": f'"Not A(Brand";v="99", "Google Chrome";v="{fake_chromium_config["major_version"]}", "Chromium";v="{fake_chromium_config["major_version"]}"',
-        "Sec-Ch-Ua-Arch": '"x86"',
-        "Sec-Ch-Ua-Bitness": '"64"',
-        "Sec-Ch-Ua-Full-Version": f'"{fake_chromium_config["version"]}"',
-        "Sec-Ch-Ua-Full-Version-List": f'"Not A(Brand";v="99.0.0.0", "Google Chrome";v="{fake_chromium_config["major_version"]}", "Chromium";v="{fake_chromium_config["major_version"]}"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Model": '""',
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Ch-Ua-Platform-Version": '"15.0.0"',
-        "Sec-Ch-Ua-Wow64": "?0",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        "User-Agent": fake_chromium_config["user_agent"],
-        "X-Client-Data": "CIW2yQEIorbJAQipncoBCIH+ygEIkqHLAQiKo8sBCPWYzQEIhaDNAQji0M4BCLPTzgEI19TOAQjy1c4BCJLYzgEIwNjOAQjM2M4BGM7VzgE=",
-    }
-
-    DOUBLE_QUOTE_REGEX = re.compile(
-        "|".join(["«", "‹", "»", "›", "„", "“", "‟", "”", "❝", "❞", "❮", "❯", "〝", "〞", "〟", "＂", "＂"])
-    )
-
-    SINGLE_QUOTE_REGEX = re.compile("|".join(["‘", "‛", "’", "❛", "❜", "`", "´", "‘", "’"]))
 
     def __init__(self):
-        self.client = Client()
+        self.client: Client = Client()
 
     def __del__(self):
         self.client.close()
+    
+    def __call__(self, img_path: str):
+        
+        request = LensOverlayServerRequest()
 
-    def lens_ocr(self, img_path: str) -> str:
-        files = {"encoded_image": ("screenshot.png", (open(img_path, "rb")), "image/png")}
+        request.objects_request.request_context.request_id.uuid = random.randint(0, 2**64 - 1)
+        request.objects_request.request_context.request_id.sequence_id = 0
+        request.objects_request.request_context.request_id.image_sequence_id = 0
+        request.objects_request.request_context.request_id.analytics_id = random.randbytes(n=16)
+        request.objects_request.request_context.request_id.routing_info = LensOverlayRoutingInfo()
 
+        request.objects_request.request_context.client_context.platform = Platform.WEB
+        request.objects_request.request_context.client_context.surface = Surface.CHROMIUM
+
+        # request.objects_request.request_context.client_context.locale_context.language = 'vi'
+        # request.objects_request.request_context.client_context.locale_context.region = 'Asia/Ho_Chi_Minh'
+        request.objects_request.request_context.client_context.locale_context.time_zone = '' # not set by chromium
+
+        request.objects_request.request_context.client_context.app_id = '' # not set by chromium
+
+        filter = AppliedFilter()
+        filter.filter_type = LensOverlayFilterType.AUTO_FILTER
+        request.objects_request.request_context.client_context.client_filters.filter.append(filter)
+
+        image_data = Utils.get_image_raw_bytes_and_dims(img_path)
+        if image_data is not None:
+            raw_bytes, width, height = image_data
+
+            request.objects_request.image_data.payload.image_bytes = raw_bytes
+            request.objects_request.image_data.image_metadata.width = width
+            request.objects_request.image_data.image_metadata.height = height
+        else:
+            print(f"Error: Could not process image file '{img_path}'. Cannot populate image data in request.")
+
+        payload = request.SerializeToString()
+
+        res = None
         max_retries = 3
         last_exception = None
         for attempt in range(max_retries):
             try:
                 res = self.client.post(
                     self.LENS_ENDPOINT,
-                    files=files,
+                    content=payload,
                     headers=self.HEADERS,
-                    params=self.PARAMS,
-                    cookies=self.COOKIES,
                     timeout=40,
                 )
 
                 if res.status_code == 200:
                     break
-
+                
                 raise Exception(f"Request failed with status code: {res.status_code}")
 
             except Exception as e:
@@ -131,75 +128,20 @@ class Lens:
                     )
                 continue
 
-        tree = lxml.html.parse(StringIO(res.text))
-        r = tree.xpath("//script[@class='ds:1']")
-        lens_object = json5.loads(r[0].text[len("AF_initDataCallback(") : -2])
-        data = lens_object["data"]
+        if res != None:
+            response_proto = LensOverlayServerResponse().FromString(res.content)
+            response_dict: dict[str, Any] = response_proto.to_dict()
 
-        try:
-            text = data[3][4][0][0]
-            if isinstance(text, list):
-                text = "\n".join(text)
-        except (IndexError, TypeError):
-            text = ""
+            result: str = ''
+            text = response_dict['objectsResponse']['text']['textLayout']['paragraphs'] 
+            for paragraph in text:
+                for line in paragraph['lines']:
+                    for word in line['words']:
+                        result += word['plainText'] + word['textSeparator']
+                result += '\n'
 
-        text = self._fix_quotes(text)
-        text = self._remove_hieroglyphs_unicode(text)
-        # text = self._apply_punctuation_and_spacing(text)
-
-        return text
-
-    def _remove_hieroglyphs_unicode(self, text: str) -> str:
-        allowed_categories = {
-            "Lu",  # Uppercase letter
-            "Ll",  # Lowercase letter
-            "Lt",  # Titlecase letter
-            "Nd",  # Decimal number
-            "Nl",  # Letter number
-            "No",  # Other number
-            "Pc",  # Connector punctuation
-            "Pd",  # Dash punctuation
-            "Ps",  # Open punctuation
-            "Pe",  # Close punctuation
-            "Pi",  # Initial punctuation
-            "Pf",  # Final punctuation
-            "Po",  # Other punctuation
-            "Sm",  # Math symbol
-            "Sc",  # Currency symbol
-            "Zs",  # Space separator
-        }
-
-        result = []
-
-        for char in text:
-            category = unicodedata.category(char)
-
-            if category in allowed_categories:
-                result.append(char)
-
-        cleaned_text = "".join(result).strip()
-
-        # Ensure no more than one consecutive whitespace (extra safety)
-        cleaned_text = re.sub(r"\s{2,}", " ", cleaned_text)
-
-        return cleaned_text
-
-    def _apply_punctuation_and_spacing(self, text: str) -> str:
-        # Remove extra spaces before punctuation
-        text = re.sub(r"\s+([,.!?…])", r"\1", text)
-
-        # Ensure single space after punctuation, except for multiple punctuation marks
-        text = re.sub(r"([,.!?…])(?!\s)(?![,.!?…])", r"\1 ", text)
-
-        # Remove space between multiple punctuation marks
-        text = re.sub(r"([,.!?…])\s+([,.!?…])", r"\1\2", text)
-
-        return text.strip()
-
-    def _fix_quotes(self, text: str) -> str:
-        text = self.SINGLE_QUOTE_REGEX.sub("'", text)
-        text = self.DOUBLE_QUOTE_REGEX.sub('"', text)
-        return text
+            return result
+        
 
 
 class OCR_Subtitles:
