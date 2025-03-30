@@ -165,12 +165,10 @@ class OCR_Subtitles:
 
     def ocr(self):
         self.completed_scans = 0
-
         for extension in self.IMAGE_EXTENSIONS:
-            paths = self.images_dir.rglob(f"*{extension}")
+            paths = self.images_dir.rglob(extension)
             string_paths = [str(p) for p in paths]
             self.images.extend(string_paths)
-            # self.images.extend(list(self.images_dir.rglob(extension)))
 
         total_images = len(self.images)
 
